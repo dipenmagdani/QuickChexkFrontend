@@ -16,6 +16,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head> 
+        <link rel="icon" href="/quikchex.png" sizes="32x32" />
+      </head>
       <body className={`${inter.className} bg-light text-secondary`}>{children}</body>
     </html>
   );
