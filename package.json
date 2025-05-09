@@ -12,7 +12,8 @@
     "react": "^18",
     "react-dom": "^18",
     "next": "14.2.5",
-    "lucide-react": "^0.508.0" 
+    "lucide-react": "^0.508.0",
+    "framer-motion": "^12.10.4"
   },
   "devDependencies": {
     "typescript": "^5",

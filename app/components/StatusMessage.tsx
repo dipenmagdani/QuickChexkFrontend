@@ -1,9 +1,12 @@
 'use client';
 
-import { CheckCircle2, XCircle, Loader2, AlertCircle } from 'lucide-react';
-import type { StatusMessage as StatusMessageType } from '../types';
+import { CheckCircle2, XCircle, Loader2, AlertCircle, Info } from 'lucide-react';
 
-interface StatusMessageProps extends StatusMessageType {}
+// Redefined StatusMessageProps
+export interface StatusMessageProps {
+  status: 'processing' | 'step_success' | 'app_success' | 'step_error' | 'app_error' | 'info' | 'cookies_update';
+  message: string;
+}
 
 export function StatusMessage({ status, message }: StatusMessageProps) {
   // Define minimal, theme-appropriate styles
@@ -30,16 +33,18 @@ export function StatusMessage({ status, message }: StatusMessageProps) {
       icon = <XCircle className="w-5 h-5 text-red-600" />;
       textColor = "text-slate-700";
       break;
-    case 'info':
+    case 'info': // 'cookies_update' will share this style
+    case 'cookies_update': 
       bgColor = "bg-blue-50";
       iconBg = "bg-blue-200";
-      icon = <AlertCircle className="w-5 h-5 text-blue-600" />;
+      icon = <AlertCircle className="w-5 h-5 text-blue-600" />; // Using AlertCircle for both
       textColor = "text-slate-700";
       break;
     default:
       bgColor = "bg-slate-100";
       iconBg = "bg-slate-300";
-      icon = <AlertCircle className="w-5 h-5 text-slate-600" />;
+      // Using AlertCircle for default as well, or keep specific default icon
+      icon = <AlertCircle className="w-5 h-5 text-slate-600" />; 
       textColor = "text-slate-700";
       break;
   }

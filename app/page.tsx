@@ -3,6 +3,7 @@
 import { Mail, Lock, Key, HelpCircle, Check, XCircle, AlertTriangle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { StatusMessage } from './components/StatusMessage';
+import { ProgressBar } from './components/ProgressBar';
 import type { Credentials, StatusMessage as StatusMessageType } from './types';
 
 export default function Home() {
@@ -66,12 +67,20 @@ export default function Home() {
     };
   }, []);
 
-  const handleCredentialsError = (message: string) => {
-    localStorage.removeItem('quickchex_credentials');
-    setHasStoredCredentials(false);
-    setLoadedCredentials(null);
-    setIsProcessing(false);
-    formRef.current?.reset();
+  const loginFailureKeywords = [
+    "Failed to obtain initial QuikChex session cookie",
+    "Login failed. Check credentials",
+    "failed to extract necessary token"
+  ];
+
+  const handleCredentialsError = (message: string, shouldClearCredentials = false) => {
+    if (shouldClearCredentials) {
+      localStorage.removeItem('quickchex_credentials');
+      setHasStoredCredentials(false);
+      setLoadedCredentials(null);
+      formRef.current?.reset(); // Reset form only if we are clearing credentials and showing it
+    }
+    setIsProcessing(false); 
     displayToast(message, 'error');
   };
 
@@ -114,12 +123,20 @@ export default function Home() {
         eventSourceRef.current.close();
       }
 
-      const params = new URLSearchParams({
+      const paramsData: Record<string, string> = {
         user_email: finalCredentials.quickchexEmail,
         quickchex_pass: finalCredentials.quickchexPassword,
         gmail_app_password: finalCredentials.googlePassword,
-      });
+      };
+
+      if (finalCredentials._quikchex_app_session) {
+        paramsData._quikchex_app_session = finalCredentials._quikchex_app_session;
+      }
+      if (finalCredentials.remember_user_token) {
+        paramsData.remember_user_token = finalCredentials.remember_user_token;
+      }
       
+      const params = new URLSearchParams(paramsData);
       const eventSourceUrl = `/api/mark-attendance?${params.toString()}`;
 
       eventSourceRef.current = new EventSource(eventSourceUrl);
@@ -129,38 +146,62 @@ export default function Home() {
           const data = JSON.parse(event.data) as StatusMessageType;
           setStatusMessages((prev) => [...prev, data]);
 
-          if (data.status === 'app_error') {
+          if (data.status === 'app_error') { 
             eventSourceRef.current?.close();
-            handleCredentialsError(data.message || 'An error occurred during processing.');
-          } else if (data.status === 'app_success') {
+            const isLoginFailure = loginFailureKeywords.some(keyword => data.message.includes(keyword));
+            handleCredentialsError(data.message || 'An critical error occurred.', isLoginFailure);
+          } else if (data.status === 'cookies_update' && data.cookies) {
             eventSourceRef.current?.close();
+            const { _quikchex_app_session, remember_user_token } = data.cookies;
+            const updatedCredentials = {
+              ...finalCredentials,
+              _quikchex_app_session,
+              remember_user_token,
+            };
+            localStorage.setItem('quickchex_credentials', JSON.stringify(updatedCredentials));
+            setLoadedCredentials(updatedCredentials);
+            setHasStoredCredentials(true);
             setIsProcessing(false);
+            displayToast('Attendance marked successfully!', 'success');
+          } else if (data.status === 'app_success') {
+            // Do not close the eventSourceRef here, to allow cookies_update to arrive.
+            setIsProcessing(false);
+            // Store the credentials that led to this success.
+            // If cookies_update follows, it will overwrite localStorage with newer cookie data.
             localStorage.setItem('quickchex_credentials', JSON.stringify(finalCredentials));
             setHasStoredCredentials(true);
             setLoadedCredentials(finalCredentials);
-            displayToast('Attendance marked successfully!', 'success');
+            displayToast(data.message || 'Attendance marked successfully!', 'success');
+            // If the stream closes naturally after this without a cookies_update, 
+            // then these were the correct final credentials for this successful operation.
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('Error parsing SSE message:', error, "Raw data:", event.data);
-          const errorMessage = `Error processing message: ${event.data || 'Malformed data received.'}`;
+          const errorMessage = `Error processing server message: ${event.data || 'Malformed data received.'}`;
           setStatusMessages((prev) => [...prev, { status: 'app_error', message: errorMessage}]);
           eventSourceRef.current?.close();
-          handleCredentialsError(errorMessage);
+          // Do NOT clear credentials for a parsing error, but do stop processing and show toast.
+          setIsProcessing(false);
+          displayToast(errorMessage, 'error');
         }
       };
 
-      eventSourceRef.current.onerror = (err) => {
+      eventSourceRef.current.onerror = (err: Event) => { // Typed err as Event
         console.error('SSE Error with /api/mark-attendance:', err);
         eventSourceRef.current?.close();
         const errMsg = 'Connection to server streaming service lost. Please try again.';
         setStatusMessages((prev) => [...prev, { status: 'app_error', message: errMsg }]);
-        handleCredentialsError(errMsg);
+        // Do NOT clear credentials for a connection error, but do stop processing and show toast.
+        setIsProcessing(false);
+        displayToast(errMsg, 'error');
       };
-    } catch (error: any) {
+    } catch (error: any) { 
       console.error('Form submission error (client-side): ', error);
-      const errMsg = 'Failed to initiate attendance marking. Please try again later.';
+      const errMsg = 'Failed to initiate attendance marking. Please check your network and try again.';
       setStatusMessages([{ status: 'app_error', message: errMsg }]);
-      handleCredentialsError(errMsg);
+      // Do NOT clear credentials for an initial connection error, but do stop processing and show toast.
+      setIsProcessing(false);
+      displayToast(errMsg, 'error');
     }
   };
 
@@ -186,18 +227,8 @@ export default function Home() {
           </div>
 
           {isProcessing ? (
-            <div className="space-y-3 max-h-[300px] overflow-y-auto scrollbar-thin py-1 px-1">
-              {statusMessages.map((msg, index) => {
-                const isLatest = index === statusMessages.length - 1;
-                return (
-                  <div
-                    key={`${msg.message}-${index}`}
-                    className={`transition-all duration-500 ease-in-out ${!isLatest ? 'opacity-50 blur-xs filter saturate-50' : 'opacity-100'}`}
-                  >
-                    <StatusMessage status={msg.status} message={msg.message} />
-                  </div>
-                );
-              })}
+            <div className="py-6 px-2">
+              <ProgressBar statusMessages={statusMessages} />
               <div ref={messagesEndRef} />
             </div>
           ) : (
