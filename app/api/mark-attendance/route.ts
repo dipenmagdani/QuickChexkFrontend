@@ -8,6 +8,9 @@ export async function GET(request: NextRequest) {
   const user_email = searchParams.get('user_email');
   const quickchex_pass = searchParams.get('quickchex_pass');
   const gmail_app_password = searchParams.get('gmail_app_password');
+  // Extract cookie values from query parameters
+  const _quikchex_app_session = searchParams.get('_quikchex_app_session');
+  const remember_user_token = searchParams.get('remember_user_token');
 
   if (!user_email || !quickchex_pass || !gmail_app_password) {
     return new Response(JSON.stringify({ status: 'error', message: 'Missing credentials' }), {
@@ -37,16 +40,26 @@ export async function GET(request: NextRequest) {
   console.log(`Proxying POST request to external API: ${externalApiUrl}`);
 
   try {
-    const response = await fetch(externalApiUrl, { // Use externalApiUrl directly
-      method: 'POST', // Changed to POST
+    const requestBody: any = {
+      user_email,
+      quickchex_pass,
+      gmail_app_password,
+    };
+
+    // Add cookies to request body if they exist
+    if (_quikchex_app_session) {
+      requestBody._quikchex_app_session = _quikchex_app_session;
+    }
+    if (remember_user_token) {
+      requestBody.remember_user_token = remember_user_token;
+    }
+
+    const response = await fetch(externalApiUrl, {
+      method: 'POST',
       headers: {
-        'Content-Type': 'application/json', // Added Content-Type for POST
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ // Added body with credentials
-        user_email,
-        quickchex_pass,
-        gmail_app_password,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {

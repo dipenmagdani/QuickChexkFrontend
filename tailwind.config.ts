@@ -30,6 +30,7 @@ const config: Config = {
       animation: {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "fade-in": "fadeIn 0.5s ease-out",
+        "progress-pulse": "progressPulse 2s ease-in-out infinite",
       },
       keyframes: {
         fadeIn: {
@@ -40,6 +41,14 @@ const config: Config = {
           to: {
             opacity: "1",
             transform: "translateY(0)",
+          },
+        },
+        progressPulse: {
+          '0%, 100%': {
+            opacity: "1",
+          },
+          '50%': {
+            opacity: "0.7",
           },
         },
       },
