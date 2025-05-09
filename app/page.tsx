@@ -284,7 +284,6 @@ export default function Home() {
                       />
                     </div>
                     <div className="ml-1 flex items-center justify-between">
-                       <span className="font-semibold text-amber-500 text-xs">Enter without spaces.</span>
                       <a 
                         href="/google-password-instructions"
                         className="text-primary hover:text-primary/80 transition-colors flex items-center text-xs mt-1 md:mt-0 md:ml-2"
