@@ -1,6 +1,6 @@
 'use client';
 
-import { Mail, Lock, Key, HelpCircle, Check, XCircle, AlertTriangle } from 'lucide-react';
+import { Mail, Lock, Key, HelpCircle, Check, XCircle, AlertTriangle, Eye, Trash2, Copy, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { StatusMessage } from './components/StatusMessage';
 import { ProgressBar } from './components/ProgressBar';
@@ -19,6 +19,9 @@ export default function Home() {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
+  
+  const [showDataModal, setShowDataModal] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const displayToast = (message: string, type: 'success' | 'error') => {
     setToastMessage(message);
@@ -27,6 +30,28 @@ export default function Home() {
     setTimeout(() => {
       setShowToast(false);
     }, 3000);
+  };
+
+  const showStoredData = () => {
+    setShowDataModal(true);
+  };
+
+  const clearStoredData = () => {
+    localStorage.removeItem('quickchex_credentials');
+    setHasStoredCredentials(false);
+    setLoadedCredentials(null);
+    formRef.current?.reset();
+    setShowDataModal(false);
+    displayToast('Stored data cleared successfully!', 'success');
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      displayToast('Copied to clipboard!', 'success');
+    } catch (err) {
+      displayToast('Failed to copy to clipboard', 'error');
+    }
   };
 
   const scrollToBottom = () => {
@@ -325,10 +350,158 @@ export default function Home() {
                 <Check className="w-4 h-4 mr-2" />
                 <span>Mark Attendance</span>
               </button>
+
+              {/* LocalStorage Management Buttons */}
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={showStoredData}
+                  type="button"
+                  className="flex-1 py-2 px-3 text-sm font-medium text-secondary/80 hover:text-secondary 
+                    border border-secondary/20 hover:border-secondary/40 rounded-md transition-all duration-200
+                    flex items-center justify-center"
+                >
+                  <Eye className="w-4 h-4 mr-2" />
+                  Show Data
+                </button>
+                <button
+                  onClick={clearStoredData}
+                  type="button"
+                  className="flex-1 py-2 px-3 text-sm font-medium text-red-400 hover:text-red-300 
+                    border border-red-400/20 hover:border-red-400/40 rounded-md transition-all duration-200
+                    flex items-center justify-center"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Clear Data
+                </button>
+              </div>
             </>
           )}
         </div>
       </div>
+
+      {/* Data Display Modal */}
+      {showDataModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Stored Credentials
+              </h3>
+              <button
+                onClick={() => setShowDataModal(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            {loadedCredentials ? (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    QuickChex Email
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={loadedCredentials.quickchexEmail}
+                      readOnly
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md 
+                        bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                    />
+                    <button
+                      onClick={() => copyToClipboard(loadedCredentials.quickchexEmail)}
+                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    QuickChex Password
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={loadedCredentials.quickchexPassword}
+                      readOnly
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md 
+                        bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                    />
+                    <button
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => copyToClipboard(loadedCredentials.quickchexPassword)}
+                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Google App Password
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={loadedCredentials.googlePassword}
+                      readOnly
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md 
+                        bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                    />
+                    <button
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => copyToClipboard(loadedCredentials.googlePassword)}
+                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <AlertTriangle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-500 dark:text-gray-400">No stored credentials found</p>
+              </div>
+            )}
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowDataModal(false)}
+                className="flex-1 py-2 px-4 text-sm font-medium text-gray-700 dark:text-gray-300 
+                  border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700
+                  transition-colors duration-200"
+              >
+                Close
+              </button>
+              {loadedCredentials && (
+                <button
+                  onClick={clearStoredData}
+                  className="flex-1 py-2 px-4 text-sm font-medium text-red-600 dark:text-red-400 
+                    border border-red-300 dark:border-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20
+                    transition-colors duration-200"
+                >
+                  Clear All Data
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 

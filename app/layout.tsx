@@ -1,12 +1,12 @@
-import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
-import './globals.css';
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'QuickChex - Attendance System',
-  description: 'Mark your attendance easily with QuickChex',
+  title: "QuickChex - Attendance System",
+  description: "Mark your attendance easily with QuickChex",
 };
 
 export default function RootLayout({
@@ -16,10 +16,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <head> 
+      <head>
         <link rel="icon" href="/quikchex.png" sizes="32x32" />
       </head>
-      <body className={`${inter.className} bg-light text-secondary`}>{children}</body>
+      <body className={`${inter.className} bg-light text-secondary`}>
+        {children}
+      </body>
     </html>
   );
-} 
+}
