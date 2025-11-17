@@ -1,10 +1,25 @@
-'use client';
+"use client";
 
-import { Mail, Lock, Key, HelpCircle, Check, XCircle, AlertTriangle, Eye, Trash2, Copy, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { StatusMessage } from './components/StatusMessage';
-import { ProgressBar } from './components/ProgressBar';
-import type { Credentials, StatusMessage as StatusMessageType } from './types';
+import {
+  Mail,
+  Lock,
+  Key,
+  HelpCircle,
+  Check,
+  XCircle,
+  AlertTriangle,
+  Eye,
+  Trash2,
+  Copy,
+  X,
+} from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { StatusMessage } from "./components/StatusMessage";
+import { ProgressBar } from "./components/ProgressBar";
+import type { Credentials, StatusMessage as StatusMessageType } from "./types";
+
+const REQUEST_TIMEOUT = 30000; // 30 seconds timeout
+const DEBOUNCE_DELAY = 500; // Prevent double clicks
 
 export default function Home() {
   const formRef = useRef<HTMLFormElement>(null);
@@ -12,18 +27,21 @@ export default function Home() {
   const [statusMessages, setStatusMessages] = useState<StatusMessageType[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isSubmittingRef = useRef(false);
 
   const [hasStoredCredentials, setHasStoredCredentials] = useState(false);
-  const [loadedCredentials, setLoadedCredentials] = useState<Credentials | null>(null);
+  const [loadedCredentials, setLoadedCredentials] =
+    useState<Credentials | null>(null);
 
   const [showToast, setShowToast] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
-  const [toastType, setToastType] = useState<'success' | 'error'>('success');
-  
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastType, setToastType] = useState<"success" | "error">("success");
+
   const [showDataModal, setShowDataModal] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const displayToast = (message: string, type: 'success' | 'error') => {
+  const displayToast = (message: string, type: "success" | "error") => {
     setToastMessage(message);
     setToastType(type);
     setShowToast(true);
@@ -37,93 +55,120 @@ export default function Home() {
   };
 
   const clearStoredData = () => {
-    localStorage.removeItem('quickchex_credentials');
+    localStorage.removeItem("quickchex_credentials");
     setHasStoredCredentials(false);
     setLoadedCredentials(null);
     formRef.current?.reset();
     setShowDataModal(false);
-    displayToast('Stored data cleared successfully!', 'success');
+    displayToast("Stored data cleared successfully!", "success");
   };
 
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      displayToast('Copied to clipboard!', 'success');
+      displayToast("Copied to clipboard!", "success");
     } catch (err) {
-      displayToast('Failed to copy to clipboard', 'error');
+      displayToast("Failed to copy to clipboard", "error");
     }
   };
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  const scrollToBottom = useCallback(() => {
+    if (messagesEndRef.current) {
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      });
+    }
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
-  }, [statusMessages]);
+  }, [statusMessages, scrollToBottom]);
 
   useEffect(() => {
-    const savedCredentialsStr = localStorage.getItem('quickchex_credentials');
+    const savedCredentialsStr = localStorage.getItem("quickchex_credentials");
     if (savedCredentialsStr) {
       try {
         const savedCredentials = JSON.parse(savedCredentialsStr) as Credentials;
-        if (savedCredentials.quickchexEmail && savedCredentials.quickchexPassword && savedCredentials.googlePassword) {
+        if (
+          savedCredentials.quickchexEmail &&
+          savedCredentials.quickchexPassword &&
+          savedCredentials.googlePassword
+        ) {
           setLoadedCredentials(savedCredentials);
           setHasStoredCredentials(true);
         } else {
-          localStorage.removeItem('quickchex_credentials');
+          localStorage.removeItem("quickchex_credentials");
           setHasStoredCredentials(false);
           setLoadedCredentials(null);
         }
       } catch (err: any) {
-        console.error('Error loading saved credentials:', err);
-        localStorage.removeItem('quickchex_credentials');
+        console.error("Error loading saved credentials:", err);
+        localStorage.removeItem("quickchex_credentials");
         setHasStoredCredentials(false);
         setLoadedCredentials(null);
       }
     }
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
-    };
+  const cleanup = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    isSubmittingRef.current = false;
   }, []);
+
+  useEffect(() => {
+    return cleanup;
+  }, [cleanup]);
 
   const loginFailureKeywords = [
     "Failed to obtain initial QuikChex session cookie",
     "Login failed. Check credentials",
-    "failed to extract necessary token"
+    "failed to extract necessary token",
   ];
 
-  const handleCredentialsError = (message: string, shouldClearCredentials = false) => {
-    if (shouldClearCredentials) {
-      localStorage.removeItem('quickchex_credentials');
-      setHasStoredCredentials(false);
-      setLoadedCredentials(null);
-      formRef.current?.reset(); // Reset form only if we are clearing credentials and showing it
-    }
-    setIsProcessing(false); 
-    displayToast(message, 'error');
-  };
+  const handleCredentialsError = useCallback(
+    (message: string, shouldClearCredentials = false) => {
+      if (shouldClearCredentials) {
+        localStorage.removeItem("quickchex_credentials");
+        setHasStoredCredentials(false);
+        setLoadedCredentials(null);
+        formRef.current?.reset(); // Reset form only if we are clearing credentials and showing it
+      }
+      setIsProcessing(false);
+      displayToast(message, "error");
+    },
+    []
+  );
 
-  const handleClick = async () => {
+  const handleClick = useCallback(async () => {
+    // Debounce: prevent multiple rapid clicks
+    if (isSubmittingRef.current || isProcessing) {
+      return;
+    }
+
     let credentialsToUse: Credentials | null = null;
 
     if (hasStoredCredentials && loadedCredentials) {
       credentialsToUse = loadedCredentials;
     } else if (formRef.current) {
       const formData = new FormData(formRef.current);
-      const email = formData.get('email') as string;
-      const password = formData.get('password') as string;
-      const gmail_password = formData.get('gmail_password') as string;
+      const email = formData.get("email") as string;
+      const password = formData.get("password") as string;
+      const gmail_password = formData.get("gmail_password") as string;
 
       if (!email || !password || !gmail_password) {
-        const validationMsg = { status: 'info' as const, message: 'Please fill in all credential fields.' };
+        const validationMsg = {
+          status: "info" as const,
+          message: "Please fill in all credential fields.",
+        };
         setStatusMessages([validationMsg]);
-        displayToast(validationMsg.message, 'error');
+        displayToast(validationMsg.message, "error");
         return;
       }
       credentialsToUse = {
@@ -134,19 +179,20 @@ export default function Home() {
     }
 
     if (!credentialsToUse) {
-      displayToast('Could not retrieve credentials.', 'error');
+      displayToast("Could not retrieve credentials.", "error");
       return;
     }
-    
+
     const finalCredentials = { ...credentialsToUse };
+    isSubmittingRef.current = true;
 
     try {
+      // Optimistic UI update - show processing immediately
       setIsProcessing(true);
       setStatusMessages([]);
 
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      // Cleanup any existing connections
+      cleanup();
 
       const paramsData: Record<string, string> = {
         user_email: finalCredentials.quickchexEmail,
@@ -155,87 +201,155 @@ export default function Home() {
       };
 
       if (finalCredentials._quikchex_app_session) {
-        paramsData._quikchex_app_session = finalCredentials._quikchex_app_session;
+        paramsData._quikchex_app_session =
+          finalCredentials._quikchex_app_session;
       }
       if (finalCredentials.remember_user_token) {
         paramsData.remember_user_token = finalCredentials.remember_user_token;
       }
-      
+
       const params = new URLSearchParams(paramsData);
       const eventSourceUrl = `/api/mark-attendance?${params.toString()}`;
 
       eventSourceRef.current = new EventSource(eventSourceUrl);
+      let hasReceivedSuccess = false;
+
+      // Set timeout for slow networks
+      timeoutRef.current = setTimeout(() => {
+        if (!hasReceivedSuccess && eventSourceRef.current) {
+          cleanup();
+          const errMsg =
+            "Request timed out. Please check your network connection and try again.";
+          setStatusMessages((prev) => [
+            ...prev,
+            { status: "app_error", message: errMsg },
+          ]);
+          setIsProcessing(false);
+          displayToast(errMsg, "error");
+        }
+      }, REQUEST_TIMEOUT);
 
       eventSourceRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data) as StatusMessageType;
-          setStatusMessages((prev) => [...prev, data]);
 
-          if (data.status === 'app_error') { 
-            eventSourceRef.current?.close();
-            const isLoginFailure = loginFailureKeywords.some(keyword => data.message.includes(keyword));
-            handleCredentialsError(data.message || 'An critical error occurred.', isLoginFailure);
-          } else if (data.status === 'cookies_update' && data.cookies) {
-            eventSourceRef.current?.close();
+          // Batch state updates for better performance
+          setStatusMessages((prev) => {
+            const newMessages = [...prev, data];
+            return newMessages;
+          });
+
+          if (data.status === "app_error") {
+            hasReceivedSuccess = true;
+            cleanup();
+            const isLoginFailure = loginFailureKeywords.some((keyword) =>
+              data.message.includes(keyword)
+            );
+            handleCredentialsError(
+              data.message || "An critical error occurred.",
+              isLoginFailure
+            );
+          } else if (data.status === "cookies_update" && data.cookies) {
+            hasReceivedSuccess = true;
+            cleanup();
             const { _quikchex_app_session, remember_user_token } = data.cookies;
             const updatedCredentials = {
               ...finalCredentials,
               _quikchex_app_session,
               remember_user_token,
             };
-            localStorage.setItem('quickchex_credentials', JSON.stringify(updatedCredentials));
+            // Single localStorage write at the end
+            localStorage.setItem(
+              "quickchex_credentials",
+              JSON.stringify(updatedCredentials)
+            );
             setLoadedCredentials(updatedCredentials);
             setHasStoredCredentials(true);
             setIsProcessing(false);
-            displayToast('Attendance marked successfully!', 'success');
-          } else if (data.status === 'app_success') {
-            // Do not close the eventSourceRef here, to allow cookies_update to arrive.
-            setIsProcessing(false);
-            // Store the credentials that led to this success.
-            // If cookies_update follows, it will overwrite localStorage with newer cookie data.
-            localStorage.setItem('quickchex_credentials', JSON.stringify(finalCredentials));
+            displayToast("Attendance marked successfully!", "success");
+          } else if (data.status === "app_success") {
+            hasReceivedSuccess = true;
+            // Close immediately on success - don't wait for cookies_update
+            // If cookies_update comes, it will handle it, but we show success immediately
+            cleanup();
+            // Store credentials immediately
+            localStorage.setItem(
+              "quickchex_credentials",
+              JSON.stringify(finalCredentials)
+            );
             setHasStoredCredentials(true);
             setLoadedCredentials(finalCredentials);
-            displayToast(data.message || 'Attendance marked successfully!', 'success');
-            // If the stream closes naturally after this without a cookies_update, 
-            // then these were the correct final credentials for this successful operation.
+            setIsProcessing(false);
+            displayToast(
+              data.message || "Attendance marked successfully!",
+              "success"
+            );
           }
         } catch (error: any) {
-          console.error('Error parsing SSE message:', error, "Raw data:", event.data);
-          const errorMessage = `Error processing server message: ${event.data || 'Malformed data received.'}`;
-          setStatusMessages((prev) => [...prev, { status: 'app_error', message: errorMessage}]);
-          eventSourceRef.current?.close();
-          // Do NOT clear credentials for a parsing error, but do stop processing and show toast.
+          console.error(
+            "Error parsing SSE message:",
+            error,
+            "Raw data:",
+            event.data
+          );
+          const errorMessage = `Error processing server message: ${
+            event.data || "Malformed data received."
+          }`;
+          setStatusMessages((prev) => [
+            ...prev,
+            { status: "app_error", message: errorMessage },
+          ]);
+          cleanup();
           setIsProcessing(false);
-          displayToast(errorMessage, 'error');
+          displayToast(errorMessage, "error");
         }
       };
 
-      eventSourceRef.current.onerror = (err: Event) => { // Typed err as Event
-        console.error('SSE Error with /api/mark-attendance:', err);
-        eventSourceRef.current?.close();
-        const errMsg = 'Connection to server streaming service lost. Please try again.';
-        setStatusMessages((prev) => [...prev, { status: 'app_error', message: errMsg }]);
-        // Do NOT clear credentials for a connection error, but do stop processing and show toast.
-        setIsProcessing(false);
-        displayToast(errMsg, 'error');
+      eventSourceRef.current.onerror = (err: Event) => {
+        console.error("SSE Error with /api/mark-attendance:", err);
+        // Only handle error if we haven't received success yet
+        if (!hasReceivedSuccess) {
+          cleanup();
+          const errMsg = "Connection to server lost. Please try again.";
+          setStatusMessages((prev) => [
+            ...prev,
+            { status: "app_error", message: errMsg },
+          ]);
+          setIsProcessing(false);
+          displayToast(errMsg, "error");
+        }
       };
-    } catch (error: any) { 
-      console.error('Form submission error (client-side): ', error);
-      const errMsg = 'Failed to initiate attendance marking. Please check your network and try again.';
-      setStatusMessages([{ status: 'app_error', message: errMsg }]);
-      // Do NOT clear credentials for an initial connection error, but do stop processing and show toast.
+    } catch (error: any) {
+      console.error("Form submission error (client-side): ", error);
+      cleanup();
+      const errMsg =
+        "Failed to initiate attendance marking. Please check your network and try again.";
+      setStatusMessages([{ status: "app_error", message: errMsg }]);
       setIsProcessing(false);
-      displayToast(errMsg, 'error');
+      displayToast(errMsg, "error");
     }
-  };
+  }, [
+    hasStoredCredentials,
+    loadedCredentials,
+    isProcessing,
+    cleanup,
+    handleCredentialsError,
+  ]);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative">
       {showToast && (
-        <div className={`fixed top-5 right-5 p-4 rounded-md shadow-lg text-white animate-fade-in-down z-50 ${toastType === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
+        <div
+          className={`fixed top-5 right-5 p-4 rounded-md shadow-lg text-white animate-fade-in-down z-50 ${
+            toastType === "success" ? "bg-green-500" : "bg-red-500"
+          }`}
+        >
           <div className="flex items-center">
-            {toastType === 'success' ? <Check size={20} className="mr-2"/> : <XCircle size={20} className="mr-2"/>}
+            {toastType === "success" ? (
+              <Check size={20} className="mr-2" />
+            ) : (
+              <XCircle size={20} className="mr-2" />
+            )}
             <span>{toastMessage}</span>
           </div>
         </div>
@@ -248,7 +362,9 @@ export default function Home() {
             <h1 className="text-3xl font-bold text-secondary tracking-tight">
               QuickChex
             </h1>
-            <p className="text-secondary/80 mt-1 text-sm">Attendance Automation</p>
+            <p className="text-secondary/80 mt-1 text-sm">
+              Attendance Automation
+            </p>
           </div>
 
           {isProcessing ? (
@@ -259,7 +375,11 @@ export default function Home() {
           ) : (
             <>
               {!hasStoredCredentials && (
-                <form ref={formRef} className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+                <form
+                  ref={formRef}
+                  className="space-y-4"
+                  onSubmit={(e) => e.preventDefault()}
+                >
                   <div className="space-y-1">
                     <div className="relative">
                       <div className="absolute left-3 top-1/2 -translate-y-1/2 text-primary">
@@ -271,10 +391,12 @@ export default function Home() {
                         placeholder="QuickChex Email"
                         className="input-field"
                         required
-                        defaultValue={loadedCredentials?.quickchexEmail || ''}
+                        defaultValue={loadedCredentials?.quickchexEmail || ""}
                       />
                     </div>
-                    <p className="text-xs text-secondary/70 ml-1">Enter your QuickChex account email</p>
+                    <p className="text-xs text-secondary/70 ml-1">
+                      Enter your QuickChex account email
+                    </p>
                   </div>
 
                   <div className="space-y-1 mt-2">
@@ -288,10 +410,14 @@ export default function Home() {
                         placeholder="QuickChex Password"
                         className="input-field"
                         required
-                        defaultValue={loadedCredentials?.quickchexPassword || ''}
+                        defaultValue={
+                          loadedCredentials?.quickchexPassword || ""
+                        }
                       />
                     </div>
-                    <p className="text-xs text-secondary/70 ml-1">Your QuickChex account password</p>
+                    <p className="text-xs text-secondary/70 ml-1">
+                      Your QuickChex account password
+                    </p>
                   </div>
 
                   <div className="space-y-1 mt-2">
@@ -305,11 +431,11 @@ export default function Home() {
                         placeholder="Google Mail Password"
                         className="input-field"
                         required
-                        defaultValue={loadedCredentials?.googlePassword || ''}
+                        defaultValue={loadedCredentials?.googlePassword || ""}
                       />
                     </div>
                     <div className="ml-1 flex items-center justify-between">
-                      <a 
+                      <a
                         href="/google-password-instructions"
                         className="text-primary hover:text-primary/80 transition-colors flex items-center text-xs mt-1 md:mt-0 md:ml-2"
                       >
@@ -332,23 +458,29 @@ export default function Home() {
                   </p>
                 </div>
               )}
-              
-              {statusMessages.length > 0 && !isProcessing && 
-                (statusMessages[0].status === 'info' || statusMessages[0].status === 'app_error' || statusMessages[0].status === 'step_error') && (
-                <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-md text-red-400 text-sm flex items-center">
-                  <AlertTriangle size={18} className="mr-2 shrink-0"/> 
-                  {statusMessages[0].message}
-                </div>
-              )}
+
+              {statusMessages.length > 0 &&
+                !isProcessing &&
+                (statusMessages[0].status === "info" ||
+                  statusMessages[0].status === "app_error" ||
+                  statusMessages[0].status === "step_error") && (
+                  <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-md text-red-400 text-sm flex items-center">
+                    <AlertTriangle size={18} className="mr-2 shrink-0" />
+                    {statusMessages[0].message}
+                  </div>
+                )}
 
               <button
                 onClick={handleClick}
                 type="button"
+                disabled={isProcessing}
                 className="btn-primary w-full py-3 px-4 mt-6 font-medium flex items-center justify-center
-                  transition-all duration-300 hover:shadow-md active:scale-[0.98]"
+                  transition-all duration-300 hover:shadow-md active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none"
               >
                 <Check className="w-4 h-4 mr-2" />
-                <span>Mark Attendance</span>
+                <span>
+                  {isProcessing ? "Processing..." : "Mark Attendance"}
+                </span>
               </button>
 
               {/* LocalStorage Management Buttons */}
@@ -394,7 +526,7 @@ export default function Home() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             {loadedCredentials ? (
               <div className="space-y-4">
                 <div>
@@ -410,7 +542,9 @@ export default function Home() {
                         bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
                     />
                     <button
-                      onClick={() => copyToClipboard(loadedCredentials.quickchexEmail)}
+                      onClick={() =>
+                        copyToClipboard(loadedCredentials.quickchexEmail)
+                      }
                       className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                     >
                       <Copy className="w-4 h-4" />
@@ -437,7 +571,9 @@ export default function Home() {
                       <Eye className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => copyToClipboard(loadedCredentials.quickchexPassword)}
+                      onClick={() =>
+                        copyToClipboard(loadedCredentials.quickchexPassword)
+                      }
                       className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                     >
                       <Copy className="w-4 h-4" />
@@ -464,7 +600,9 @@ export default function Home() {
                       <Eye className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => copyToClipboard(loadedCredentials.googlePassword)}
+                      onClick={() =>
+                        copyToClipboard(loadedCredentials.googlePassword)
+                      }
                       className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                     >
                       <Copy className="w-4 h-4" />
@@ -475,7 +613,9 @@ export default function Home() {
             ) : (
               <div className="text-center py-8">
                 <AlertTriangle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-500 dark:text-gray-400">No stored credentials found</p>
+                <p className="text-gray-500 dark:text-gray-400">
+                  No stored credentials found
+                </p>
               </div>
             )}
 
@@ -504,4 +644,4 @@ export default function Home() {
       )}
     </div>
   );
-} 
+}
