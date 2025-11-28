@@ -41,6 +41,40 @@ export default function Home() {
   const [showDataModal, setShowDataModal] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // Today's attendance times
+  const [todayAttendance, setTodayAttendance] = useState<{
+    checkIn?: string;
+    checkOut?: string;
+  } | null>(null);
+
+  // Load today's attendance on mount
+  useEffect(() => {
+    const today = new Date().toISOString().split("T")[0];
+    const attendanceKey = `attendance_${today}`;
+    const savedAttendance = localStorage.getItem(attendanceKey);
+    if (savedAttendance) {
+      try {
+        setTodayAttendance(JSON.parse(savedAttendance));
+      } catch (e) {
+        console.error("Error loading attendance:", e);
+      }
+    }
+  }, []);
+
+  // Update attendance display after successful mark
+  const updateTodayAttendance = useCallback(() => {
+    const today = new Date().toISOString().split("T")[0];
+    const attendanceKey = `attendance_${today}`;
+    const savedAttendance = localStorage.getItem(attendanceKey);
+    if (savedAttendance) {
+      try {
+        setTodayAttendance(JSON.parse(savedAttendance));
+      } catch (e) {
+        console.error("Error loading attendance:", e);
+      }
+    }
+  }, []);
+
   const displayToast = (message: string, type: "success" | "error") => {
     setToastMessage(message);
     setToastType(type);
@@ -250,36 +284,67 @@ export default function Home() {
               isLoginFailure
             );
           } else if (data.status === "cookies_update" && data.cookies) {
-            hasReceivedSuccess = true;
-            cleanup();
+            // cookies_update comes BEFORE app_success now - just save the cookies
             const { _quikchex_app_session, remember_user_token } = data.cookies;
             const updatedCredentials = {
               ...finalCredentials,
               _quikchex_app_session,
               remember_user_token,
             };
-            // Single localStorage write at the end
+            // Save to localStorage
             localStorage.setItem(
               "quickchex_credentials",
               JSON.stringify(updatedCredentials)
             );
             setLoadedCredentials(updatedCredentials);
             setHasStoredCredentials(true);
-            setIsProcessing(false);
-            displayToast("Attendance marked successfully!", "success");
+            console.log(
+              "Cookies saved to localStorage:",
+              _quikchex_app_session?.substring(0, 30) + "..."
+            );
+            // Don't close connection or show toast yet - wait for app_success
           } else if (data.status === "app_success") {
             hasReceivedSuccess = true;
-            // Close immediately on success - don't wait for cookies_update
-            // If cookies_update comes, it will handle it, but we show success immediately
             cleanup();
-            // Store credentials immediately
-            localStorage.setItem(
-              "quickchex_credentials",
-              JSON.stringify(finalCredentials)
-            );
+
+            // Record check-in/check-out time in localStorage
+            const now = new Date();
+            const today = now.toISOString().split("T")[0];
+            const timeStr = now.toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            });
+            const attendanceKey = `attendance_${today}`;
+            const existingAttendance = localStorage.getItem(attendanceKey);
+
+            let attendanceData = existingAttendance
+              ? JSON.parse(existingAttendance)
+              : {};
+
+            // Determine if this is check-in or check-out based on existing data
+            if (!attendanceData.checkIn) {
+              attendanceData.checkIn = timeStr;
+            } else {
+              attendanceData.checkOut = timeStr;
+            }
+
+            localStorage.setItem(attendanceKey, JSON.stringify(attendanceData));
+
+            // Credentials should already be saved by cookies_update, but save if not
+            const existingCreds = localStorage.getItem("quickchex_credentials");
+            if (!existingCreds) {
+              localStorage.setItem(
+                "quickchex_credentials",
+                JSON.stringify(finalCredentials)
+              );
+            }
             setHasStoredCredentials(true);
-            setLoadedCredentials(finalCredentials);
             setIsProcessing(false);
+
+            // Update attendance display
+            updateTodayAttendance();
+
             displayToast(
               data.message || "Attendance marked successfully!",
               "success"
@@ -334,6 +399,7 @@ export default function Home() {
     isProcessing,
     cleanup,
     handleCredentialsError,
+    updateTodayAttendance,
   ]);
 
   return (
@@ -458,6 +524,32 @@ export default function Home() {
                   </p>
                 </div>
               )}
+
+              {/* Today's Attendance Times */}
+              {todayAttendance &&
+                (todayAttendance.checkIn || todayAttendance.checkOut) &&
+                !isProcessing && (
+                  <div className="my-4 p-4 border border-blue-500/30 bg-blue-500/10 rounded-lg">
+                    <p className="text-sm font-medium text-secondary/90 mb-2 text-center">
+                      📅 Today's Attendance
+                    </p>
+                    <div className="flex justify-around text-center">
+                      <div>
+                        <p className="text-xs text-secondary/70">Check In</p>
+                        <p className="text-sm font-semibold text-green-500">
+                          {todayAttendance.checkIn || "—"}
+                        </p>
+                      </div>
+                      <div className="border-l border-secondary/20"></div>
+                      <div>
+                        <p className="text-xs text-secondary/70">Check Out</p>
+                        <p className="text-sm font-semibold text-orange-500">
+                          {todayAttendance.checkOut || "—"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
               {statusMessages.length > 0 &&
                 !isProcessing &&
