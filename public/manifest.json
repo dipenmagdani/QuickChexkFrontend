@@ -1,0 +1,26 @@
+{
+  "name": "QuickChex Attendance",
+  "short_name": "QuickChex",
+  "description": "Mark your attendance easily with QuickChex automation",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#EFEEEA",
+  "theme_color": "#FE7743",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/quikchex.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/quikchex.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "prefer_related_applications": false
+}

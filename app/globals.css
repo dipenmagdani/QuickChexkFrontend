@@ -3,17 +3,35 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    height: -webkit-fill-available;
+    scroll-behavior: smooth;
+  }
+
   body {
     @apply text-secondary bg-light font-sans antialiased min-h-screen bg-grid-pattern;
     background-size: 20px 20px;
     background-attachment: fixed;
     -webkit-tap-highlight-color: transparent;
+    min-height: 100dvh;
+    /* Safe area for notched phones */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior-y: none;
   }
 
   @media (max-width: 640px) {
     body {
       background-size: 15px 15px;
     }
+  }
+
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
@@ -23,37 +41,40 @@
   }
 
   .btn-primary {
-    @apply bg-primary text-light py-2 px-4 rounded hover:bg-primary/90 transition-colors 
-           active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-light;
+    @apply bg-primary text-light py-2 px-4 rounded-xl font-semibold hover:bg-primary/90 
+           transition-all duration-200 active:scale-[0.97] focus:outline-none 
+           focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-light
+           touch-manipulation select-none;
+    -webkit-tap-highlight-color: transparent;
   }
-  
+
+  .btn-secondary {
+    @apply py-2 px-3 text-sm font-medium text-secondary/80 hover:text-secondary 
+      border border-secondary/20 hover:border-secondary/40 rounded-xl transition-all duration-200
+      flex items-center justify-center touch-manipulation select-none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   .input-field {
-    @apply bg-white border border-secondary/20 rounded px-10 py-2 text-secondary 
-           focus:outline-none focus:ring-1 focus:ring-primary/50 w-full
+    @apply bg-white/80 border border-secondary/20 rounded-xl px-10 py-2.5 text-secondary 
+           focus:outline-none focus:ring-2 focus:ring-primary/30 w-full
            placeholder:text-secondary/40 transition-all duration-200;
-    height: 46px;
+    height: 50px;
+    font-size: 16px; /* Prevent zoom on iOS */
   }
 
   .input-field:focus {
-    @apply border-primary/30;
-  }
-
-  /* Mobile optimizations */
-  @media (max-width: 640px) {
-    .input-field {
-      height: 42px;
-      font-size: 16px; /* Prevent zoom on iOS */
-    }
+    @apply border-primary/40 bg-white;
   }
 
   /* Custom scrollbar for status messages */
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: theme('colors.primary') transparent;
+    scrollbar-color: theme("colors.primary") transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
+    width: 4px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-track {
@@ -61,7 +82,73 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: theme('colors.primary');
+    background-color: theme("colors.primary");
     border-radius: 20px;
   }
-} 
+
+  /* Animated gradient border */
+  .gradient-border {
+    position: relative;
+    background: linear-gradient(theme("colors.light"), theme("colors.light"))
+        padding-box,
+      linear-gradient(135deg, #fe7743, #273f4f) border-box;
+    border: 2px solid transparent;
+    border-radius: 1rem;
+  }
+
+  /* Safe area padding for bottom buttons */
+  .pb-safe {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  /* Smooth card hover */
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5;
+  }
+
+  /* Pulse animation for "online" indicator */
+  .pulse-dot {
+    animation: pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.7;
+      transform: scale(0.9);
+    }
+  }
+
+  /* Fade in down for toasts */
+  @keyframes fadeInDown {
+    from {
+      opacity: 0;
+      transform: translateY(-16px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .animate-fade-in-down {
+    animation: fadeInDown 0.3s ease-out forwards;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-fade-in {
+    animation: fadeIn 0.4s ease-out forwards;
+  }
+}

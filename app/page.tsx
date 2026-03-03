@@ -9,21 +9,27 @@ import {
   XCircle,
   AlertTriangle,
   Eye,
+  EyeOff,
   Trash2,
   Copy,
   X,
   Clock,
   History,
+  CheckCircle2,
+  Edit3,
+  LogIn,
+  LogOut,
+  Wifi,
+  WifiOff,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw,
 } from "lucide-react";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { StatusMessage } from "./components/StatusMessage";
 import { ProgressBar } from "./components/ProgressBar";
 import type { Credentials, StatusMessage as StatusMessageType } from "./types";
 
-const REQUEST_TIMEOUT = 20000; // 20 seconds timeout (reduced from 30)
-const DEBOUNCE_DELAY = 500;
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL?.replace("/mark", "") || "";
+const REQUEST_TIMEOUT = 20000;
 
 export default function Home() {
   const formRef = useRef<HTMLFormElement>(null);
@@ -45,6 +51,22 @@ export default function Home() {
   const [showDataModal, setShowDataModal] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showManualModal, setShowManualModal] = useState(false);
+
+  // Manual entry state
+  const [manualType, setManualType] = useState<"check_in" | "check_out">(
+    "check_in"
+  );
+  const [manualDate, setManualDate] = useState(
+    () => new Date().toISOString().split("T")[0]
+  );
+  const [manualTime, setManualTime] = useState(() => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, "0")}:${String(
+      now.getMinutes()
+    ).padStart(2, "0")}`;
+  });
+  const [manualSubmitting, setManualSubmitting] = useState(false);
 
   // Today's attendance from server
   const [todayAttendance, setTodayAttendance] = useState<{
@@ -55,6 +77,29 @@ export default function Home() {
   // Attendance history from server
   const [attendanceHistory, setAttendanceHistory] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // PWA online status
+  const [isOnline, setIsOnline] = useState(true);
+
+  // Register service worker
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then(() => console.log("SW registered"))
+        .catch((err) => console.error("SW registration failed:", err));
+    }
+
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    setIsOnline(navigator.onLine);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   // Load credentials on mount
   useEffect(() => {
@@ -69,7 +114,6 @@ export default function Home() {
         ) {
           setLoadedCredentials(saved);
           setHasStoredCredentials(true);
-          // Fetch attendance history for this user
           fetchAttendanceHistory(saved.quickchexEmail);
         } else {
           localStorage.removeItem("quickchex_credentials");
@@ -93,7 +137,6 @@ export default function Home() {
         const records = data.records || [];
         setAttendanceHistory(records);
 
-        // Set today's attendance from server data
         const today = new Date().toISOString().split("T")[0];
         const todayRecord = records.find((r: any) => r.date === today);
         if (todayRecord) {
@@ -119,6 +162,8 @@ export default function Home() {
                 )
               : undefined,
           });
+        } else {
+          setTodayAttendance(null);
         }
       }
     } catch (e) {
@@ -128,12 +173,15 @@ export default function Home() {
     }
   }, []);
 
-  const displayToast = (message: string, type: "success" | "error") => {
-    setToastMessage(message);
-    setToastType(type);
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3000);
-  };
+  const displayToast = useCallback(
+    (message: string, type: "success" | "error") => {
+      setToastMessage(message);
+      setToastType(type);
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3500);
+    },
+    []
+  );
 
   const clearStoredData = () => {
     localStorage.removeItem("quickchex_credentials");
@@ -197,7 +245,6 @@ export default function Home() {
 
       if (hasStoredCredentials && loadedCredentials) {
         credentialsToUse = { ...loadedCredentials };
-        // If retrying without session, clear session cookies
         if (retryWithoutSession) {
           credentialsToUse._quikchex_app_session = undefined;
           credentialsToUse.remember_user_token = undefined;
@@ -232,7 +279,6 @@ export default function Home() {
         setStatusMessages([]);
         cleanup();
 
-        // Build request body (credentials in POST body, not URL params)
         const requestBody: Record<string, string> = {
           user_email: finalCredentials.quickchexEmail,
           quickchex_pass: finalCredentials.quickchexPassword,
@@ -248,7 +294,6 @@ export default function Home() {
             finalCredentials.remember_user_token;
         }
 
-        // Use fetch + POST + ReadableStream instead of EventSource GET
         abortControllerRef.current = new AbortController();
 
         let hasReceivedSuccess = false;
@@ -291,7 +336,7 @@ export default function Home() {
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
-          buffer = lines.pop() || ""; // Keep incomplete line in buffer
+          buffer = lines.pop() || "";
 
           for (const line of lines) {
             const trimmed = line.trim();
@@ -302,14 +347,12 @@ export default function Home() {
 
             try {
               const data = JSON.parse(jsonStr) as StatusMessageType;
-
               setStatusMessages((prev) => [...prev, data]);
 
               if (data.status === "app_error") {
                 hasReceivedSuccess = true;
                 cleanup();
 
-                // Check if this is a CSRF/session error (auto-retry)
                 const isCsrfError =
                   data.message.includes("CSRF") ||
                   data.message.includes("Session expired") ||
@@ -320,7 +363,6 @@ export default function Home() {
                 );
 
                 if (isCsrfError && !retryWithoutSession) {
-                  // Auto-retry without session cookies
                   setStatusMessages((prev) => [
                     ...prev,
                     {
@@ -330,7 +372,6 @@ export default function Home() {
                   ]);
                   setIsProcessing(false);
                   isSubmittingRef.current = false;
-                  // Clear session from stored credentials
                   const updatedCreds = { ...finalCredentials };
                   delete updatedCreds._quikchex_app_session;
                   delete updatedCreds.remember_user_token;
@@ -339,7 +380,6 @@ export default function Home() {
                     JSON.stringify(updatedCreds)
                   );
                   setLoadedCredentials(updatedCreds);
-                  // Retry
                   setTimeout(() => handleClick(true), 500);
                   return;
                 }
@@ -370,7 +410,6 @@ export default function Home() {
                 hasReceivedSuccess = true;
                 cleanup();
 
-                // Save credentials if not already saved
                 if (!localStorage.getItem("quickchex_credentials")) {
                   localStorage.setItem(
                     "quickchex_credentials",
@@ -379,10 +418,7 @@ export default function Home() {
                 }
                 setHasStoredCredentials(true);
                 setIsProcessing(false);
-
-                // Refresh attendance from server
                 fetchAttendanceHistory(finalCredentials.quickchexEmail);
-
                 displayToast(data.message || "Attendance marked!", "success");
               }
             } catch (parseError) {
@@ -391,13 +427,12 @@ export default function Home() {
           }
         }
 
-        // Stream ended without success/error
         if (!hasReceivedSuccess) {
           cleanup();
           setIsProcessing(false);
         }
       } catch (error: any) {
-        if (error.name === "AbortError") return; // Intentional abort
+        if (error.name === "AbortError") return;
         console.error("Submission error:", error);
         cleanup();
         setStatusMessages([
@@ -416,8 +451,63 @@ export default function Home() {
       isProcessing,
       cleanup,
       fetchAttendanceHistory,
+      displayToast,
     ]
   );
+
+  // Manual attendance submission
+  const handleManualSubmit = useCallback(async () => {
+    if (!loadedCredentials?.quickchexEmail) {
+      displayToast("No user credentials found.", "error");
+      return;
+    }
+    if (!manualDate || !manualTime) {
+      displayToast("Please select date and time.", "error");
+      return;
+    }
+
+    setManualSubmitting(true);
+    try {
+      const localDatetime = `${manualDate}T${manualTime}:00`;
+      const isoDatetime = new Date(localDatetime).toISOString();
+
+      const resp = await fetch("/api/manual-attendance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_email: loadedCredentials.quickchexEmail,
+          datetime: isoDatetime,
+          type: manualType,
+        }),
+      });
+
+      const data = await resp.json();
+
+      if (resp.ok && data.status === "success") {
+        displayToast(
+          `${
+            manualType === "check_in" ? "Check-In" : "Check-Out"
+          } recorded for ${manualDate} at ${manualTime}!`,
+          "success"
+        );
+        setShowManualModal(false);
+        fetchAttendanceHistory(loadedCredentials.quickchexEmail);
+      } else {
+        displayToast(data.message || "Failed to record attendance.", "error");
+      }
+    } catch (e) {
+      displayToast("Network error. Please try again.", "error");
+    } finally {
+      setManualSubmitting(false);
+    }
+  }, [
+    loadedCredentials,
+    manualDate,
+    manualTime,
+    manualType,
+    displayToast,
+    fetchAttendanceHistory,
+  ]);
 
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr + "T00:00:00");
@@ -441,148 +531,198 @@ export default function Home() {
     }
   };
 
+  const getWorkDuration = (checkIn: string | null, checkOut: string | null) => {
+    if (!checkIn || !checkOut) return null;
+    try {
+      const dur = new Date(checkOut).getTime() - new Date(checkIn).getTime();
+      const hours = Math.floor(dur / 3600000);
+      const mins = Math.floor((dur % 3600000) / 60000);
+      return `${hours}h ${mins}m`;
+    } catch {
+      return null;
+    }
+  };
+
+  const lastError =
+    statusMessages.length > 0 &&
+    !isProcessing &&
+    (statusMessages[statusMessages.length - 1].status === "app_error" ||
+      statusMessages[statusMessages.length - 1].status === "step_error")
+      ? statusMessages[statusMessages.length - 1]
+      : null;
+
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative">
+    <div className="min-h-[100dvh] flex flex-col items-center justify-center p-4 sm:p-6 relative">
+      {/* Toast Notification */}
       {showToast && (
         <div
-          className={`fixed top-5 right-5 p-4 rounded-md shadow-lg text-white animate-fade-in-down z-50 ${
-            toastType === "success" ? "bg-green-500" : "bg-red-500"
-          }`}
+          className={`fixed top-4 left-1/2 -translate-x-1/2 sm:left-auto sm:translate-x-0 sm:right-5 sm:top-5
+            px-4 py-3 rounded-2xl shadow-xl text-white animate-fade-in-down z-50 
+            flex items-center gap-2.5 min-w-[220px] max-w-[calc(100vw-2rem)] sm:max-w-[340px]
+            ${
+              toastType === "success"
+                ? "bg-gradient-to-r from-emerald-500 to-green-600"
+                : "bg-gradient-to-r from-red-500 to-rose-600"
+            }`}
         >
-          <div className="flex items-center">
-            {toastType === "success" ? (
-              <Check size={20} className="mr-2" />
-            ) : (
-              <XCircle size={20} className="mr-2" />
-            )}
-            <span>{toastMessage}</span>
-          </div>
+          {toastType === "success" ? (
+            <CheckCircle2 size={18} className="shrink-0" />
+          ) : (
+            <XCircle size={18} className="shrink-0" />
+          )}
+          <span className="text-sm font-medium">{toastMessage}</span>
         </div>
       )}
 
-      <div className="relative w-full max-w-md">
-        <div className="absolute inset-0 bg-primary/10 rounded-full blur-[100px] -z-10" />
-        <div className="glass-effect rounded-lg p-8 md:px-6 animate-fade-in shadow-lg">
-          <div className="text-center mb-6">
-            <h1 className="text-3xl font-bold text-secondary tracking-tight">
-              QuickChex
-            </h1>
-            <p className="text-secondary/80 mt-1 text-sm">
-              Attendance Automation
-            </p>
+      {/* Main Card */}
+      <div className="relative w-full max-w-sm sm:max-w-md">
+        {/* Glow effect */}
+        <div className="absolute inset-0 bg-primary/15 rounded-full blur-[80px] -z-10 scale-110" />
+
+        <div className="glass-effect rounded-3xl p-6 sm:p-8 animate-fade-in shadow-2xl shadow-secondary/10">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-secondary tracking-tight">
+                QuickChex
+              </h1>
+              <p className="text-secondary/60 mt-0.5 text-xs sm:text-sm">
+                Attendance Automation
+              </p>
+            </div>
+            {/* Online indicator */}
+            <div className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-full bg-secondary/5 border border-secondary/10">
+              {isOnline ? (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot" />
+                  <Wifi size={12} className="text-emerald-600" />
+                </>
+              ) : (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  <WifiOff size={12} className="text-red-500" />
+                </>
+              )}
+            </div>
           </div>
 
+          {/* Processing state */}
           {isProcessing ? (
-            <div className="py-6 px-2">
+            <div className="py-4 px-1">
               <ProgressBar statusMessages={statusMessages} />
               <div ref={messagesEndRef} />
             </div>
           ) : (
             <>
+              {/* Credential Form */}
               {!hasStoredCredentials && (
                 <form
                   ref={formRef}
-                  className="space-y-4"
+                  className="space-y-3"
                   onSubmit={(e) => e.preventDefault()}
                 >
-                  <div className="space-y-1">
-                    <div className="relative">
-                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-primary">
-                        <Mail size={16} />
-                      </div>
-                      <input
-                        type="email"
-                        name="email"
-                        placeholder="QuickChex Email"
-                        className="input-field"
-                        required
-                        defaultValue={loadedCredentials?.quickchexEmail || ""}
-                      />
+                  <div className="relative">
+                    <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-primary/70">
+                      <Mail size={16} />
                     </div>
-                    <p className="text-xs text-secondary/70 ml-1">
-                      Enter your QuickChex account email
-                    </p>
+                    <input
+                      type="email"
+                      name="email"
+                      placeholder="QuickChex Email"
+                      className="input-field"
+                      required
+                      autoComplete="email"
+                      defaultValue={loadedCredentials?.quickchexEmail || ""}
+                    />
                   </div>
 
-                  <div className="space-y-1 mt-2">
-                    <div className="relative">
-                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-primary">
-                        <Lock size={16} />
-                      </div>
-                      <input
-                        type="password"
-                        name="password"
-                        placeholder="QuickChex Password"
-                        className="input-field"
-                        required
-                        defaultValue={
-                          loadedCredentials?.quickchexPassword || ""
-                        }
-                      />
+                  <div className="relative">
+                    <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-primary/70">
+                      <Lock size={16} />
                     </div>
-                    <p className="text-xs text-secondary/70 ml-1">
-                      Your QuickChex account password
-                    </p>
+                    <input
+                      type="password"
+                      name="password"
+                      placeholder="QuickChex Password"
+                      className="input-field"
+                      required
+                      autoComplete="current-password"
+                      defaultValue={loadedCredentials?.quickchexPassword || ""}
+                    />
                   </div>
 
-                  <div className="space-y-1 mt-2">
-                    <div className="relative">
-                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-primary">
-                        <Key size={16} />
-                      </div>
-                      <input
-                        type="password"
-                        name="gmail_password"
-                        placeholder="Google Mail Password"
-                        className="input-field"
-                        required
-                        defaultValue={loadedCredentials?.googlePassword || ""}
-                      />
+                  <div className="relative">
+                    <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-primary/70">
+                      <Key size={16} />
                     </div>
-                    <div className="ml-1 flex items-center justify-between">
-                      <a
-                        href="/google-password-instructions"
-                        className="text-primary hover:text-primary/80 transition-colors flex items-center text-xs mt-1 md:mt-0 md:ml-2"
-                      >
-                        <HelpCircle size={12} className="mr-1" />
-                        How to get it?
-                      </a>
-                    </div>
+                    <input
+                      type="password"
+                      name="gmail_password"
+                      placeholder="Google App Password"
+                      className="input-field"
+                      required
+                      defaultValue={loadedCredentials?.googlePassword || ""}
+                    />
                   </div>
+
+                  <a
+                    href="/google-password-instructions"
+                    className="text-primary hover:text-primary/80 transition-colors flex items-center text-xs mt-1 w-fit"
+                  >
+                    <HelpCircle size={12} className="mr-1" />
+                    How to get Google App Password?
+                  </a>
                 </form>
               )}
 
+              {/* Saved credentials badge */}
               {hasStoredCredentials && !isProcessing && (
-                <div className="text-center my-6 p-4 border border-green-500/30 bg-green-500/10 rounded-lg">
-                  <Check size={24} className="mx-auto text-green-500 mb-2" />
-                  <p className="text-sm text-secondary/90">
-                    Credentials are saved. Ready to mark attendance.
-                  </p>
-                  <p className="text-xs text-secondary/70 mt-1">
-                    Using: {loadedCredentials?.quickchexEmail}
-                  </p>
+                <div className="gradient-border p-4 mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-emerald-500/15 flex items-center justify-center shrink-0">
+                      <Check size={18} className="text-emerald-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-secondary">
+                        Ready to Mark
+                      </p>
+                      <p className="text-xs text-secondary/60 truncate">
+                        {loadedCredentials?.quickchexEmail}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
 
-              {/* Today's Attendance Times */}
+              {/* Today's Attendance Summary */}
               {todayAttendance &&
-                (todayAttendance.checkIn || todayAttendance.checkOut) &&
-                !isProcessing && (
-                  <div className="my-4 p-4 border border-blue-500/30 bg-blue-500/10 rounded-lg">
-                    <p className="text-sm font-medium text-secondary/90 mb-2 text-center">
-                      📅 Today&apos;s Attendance
+                (todayAttendance.checkIn || todayAttendance.checkOut) && (
+                  <div className="mb-3 p-4 rounded-2xl bg-secondary/5 border border-secondary/10">
+                    <p className="text-xs font-semibold text-secondary/50 uppercase tracking-wider mb-3">
+                      Today&apos;s Attendance
                     </p>
-                    <div className="flex justify-around text-center">
-                      <div>
-                        <p className="text-xs text-secondary/70">Check In</p>
-                        <p className="text-sm font-semibold text-green-500">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-emerald-500/10 rounded-xl p-2.5 text-center">
+                        <LogIn
+                          size={14}
+                          className="text-emerald-600 mx-auto mb-1"
+                        />
+                        <p className="text-xs text-secondary/50 mb-0.5">
+                          Check In
+                        </p>
+                        <p className="text-sm font-bold text-emerald-600">
                           {todayAttendance.checkIn || "—"}
                         </p>
                       </div>
-                      <div className="border-l border-secondary/20"></div>
-                      <div>
-                        <p className="text-xs text-secondary/70">Check Out</p>
-                        <p className="text-sm font-semibold text-orange-500">
+                      <div className="bg-orange-500/10 rounded-xl p-2.5 text-center">
+                        <LogOut
+                          size={14}
+                          className="text-orange-500 mx-auto mb-1"
+                        />
+                        <p className="text-xs text-secondary/50 mb-0.5">
+                          Check Out
+                        </p>
+                        <p className="text-sm font-bold text-orange-500">
                           {todayAttendance.checkOut || "—"}
                         </p>
                       </div>
@@ -590,34 +730,29 @@ export default function Home() {
                   </div>
                 )}
 
-              {statusMessages.length > 0 &&
-                !isProcessing &&
-                (statusMessages[statusMessages.length - 1].status === "info" ||
-                  statusMessages[statusMessages.length - 1].status ===
-                    "app_error" ||
-                  statusMessages[statusMessages.length - 1].status ===
-                    "step_error") && (
-                  <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-md text-red-400 text-sm flex items-center">
-                    <AlertTriangle size={18} className="mr-2 shrink-0" />
-                    {statusMessages[statusMessages.length - 1].message}
-                  </div>
-                )}
+              {/* Error message */}
+              {lastError && (
+                <div className="mb-3 p-3 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-sm flex items-start gap-2">
+                  <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                  <span>{lastError.message}</span>
+                </div>
+              )}
 
+              {/* Main Mark Attendance Button */}
               <button
                 onClick={() => handleClick(false)}
                 type="button"
-                disabled={isProcessing}
-                className="btn-primary w-full py-3 px-4 mt-6 font-medium flex items-center justify-center
-                  transition-all duration-300 hover:shadow-md active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isProcessing || !isOnline}
+                className="btn-primary w-full py-3.5 px-4 mt-4 font-semibold flex items-center justify-center gap-2
+                  text-base shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40
+                  disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
               >
-                <Check className="w-4 h-4 mr-2" />
-                <span>
-                  {isProcessing ? "Processing..." : "Mark Attendance"}
-                </span>
+                <Check className="w-5 h-5" />
+                <span>Mark Attendance</span>
               </button>
 
-              {/* Buttons Row */}
-              <div className="flex gap-2 mt-4">
+              {/* Action Buttons Row */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
                 {hasStoredCredentials && (
                   <button
                     onClick={() => {
@@ -629,79 +764,130 @@ export default function Home() {
                       }
                     }}
                     type="button"
-                    className="flex-1 py-2 px-3 text-sm font-medium text-secondary/80 hover:text-secondary 
-                      border border-secondary/20 hover:border-secondary/40 rounded-md transition-all duration-200
-                      flex items-center justify-center"
+                    className="btn-secondary py-2.5 text-xs col-span-1"
                   >
-                    <History className="w-4 h-4 mr-2" />
+                    <History className="w-3.5 h-3.5 mr-1.5" />
                     History
+                    {showHistory ? (
+                      <ChevronUp className="w-3 h-3 ml-1" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3 ml-1" />
+                    )}
                   </button>
                 )}
+
+                {hasStoredCredentials && (
+                  <button
+                    onClick={() => {
+                      // Set default time to now
+                      const now = new Date();
+                      setManualDate(now.toISOString().split("T")[0]);
+                      setManualTime(
+                        `${String(now.getHours()).padStart(2, "0")}:${String(
+                          now.getMinutes()
+                        ).padStart(2, "0")}`
+                      );
+                      setShowManualModal(true);
+                    }}
+                    type="button"
+                    className="btn-secondary py-2.5 text-xs col-span-1"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 mr-1.5" />
+                    Manual
+                  </button>
+                )}
+
                 <button
                   onClick={() => setShowDataModal(true)}
                   type="button"
-                  className="flex-1 py-2 px-3 text-sm font-medium text-secondary/80 hover:text-secondary 
-                    border border-secondary/20 hover:border-secondary/40 rounded-md transition-all duration-200
-                    flex items-center justify-center"
+                  className="btn-secondary py-2.5 text-xs col-span-1"
                 >
-                  <Eye className="w-4 h-4 mr-2" />
-                  Show Data
+                  <Eye className="w-3.5 h-3.5 mr-1.5" />
+                  Data
                 </button>
+
                 <button
                   onClick={clearStoredData}
                   type="button"
-                  className="flex-1 py-2 px-3 text-sm font-medium text-red-400 hover:text-red-300 
-                    border border-red-400/20 hover:border-red-400/40 rounded-md transition-all duration-200
-                    flex items-center justify-center"
+                  className="py-2.5 px-3 text-xs font-medium text-red-400 hover:text-red-300 
+                    border border-red-400/20 hover:border-red-400/40 rounded-xl transition-all duration-200
+                    flex items-center justify-center touch-manipulation col-span-1"
                 >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Clear Data
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                  Clear
                 </button>
               </div>
 
-              {/* Attendance History */}
+              {/* Attendance History Panel */}
               {showHistory && hasStoredCredentials && (
-                <div className="mt-4 border border-secondary/20 rounded-lg overflow-hidden">
-                  <div className="p-3 bg-secondary/5 border-b border-secondary/10">
-                    <h3 className="text-sm font-semibold text-secondary flex items-center">
-                      <Clock className="w-4 h-4 mr-2" />
+                <div className="mt-3 rounded-2xl overflow-hidden border border-secondary/10 animate-fade-in">
+                  <div className="px-4 py-3 bg-secondary/5 border-b border-secondary/10 flex items-center justify-between">
+                    <h3 className="text-xs font-semibold text-secondary/70 uppercase tracking-wider flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5" />
                       Last 7 Days
                     </h3>
+                    <button
+                      onClick={() =>
+                        loadedCredentials &&
+                        fetchAttendanceHistory(loadedCredentials.quickchexEmail)
+                      }
+                      className="p-1 rounded-lg hover:bg-secondary/10 transition-colors"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 text-secondary/50 ${
+                          historyLoading ? "animate-spin" : ""
+                        }`}
+                      />
+                    </button>
                   </div>
                   {historyLoading ? (
-                    <div className="p-4 text-center text-sm text-secondary/60">
-                      Loading...
+                    <div className="p-6 text-center">
+                      <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-2" />
+                      <p className="text-xs text-secondary/50">Loading...</p>
                     </div>
                   ) : attendanceHistory.length === 0 ? (
-                    <div className="p-4 text-center text-sm text-secondary/60">
+                    <div className="p-6 text-center text-sm text-secondary/50">
                       No attendance records found
                     </div>
                   ) : (
-                    <div className="divide-y divide-secondary/10 max-h-[250px] overflow-y-auto">
-                      {attendanceHistory.map((record, idx) => (
-                        <div
-                          key={record.id || idx}
-                          className="flex items-center justify-between px-4 py-3 text-sm"
-                        >
-                          <span className="text-secondary/80 font-medium min-w-[90px]">
-                            {formatDate(record.date)}
-                          </span>
-                          <div className="flex gap-4 text-xs">
-                            <span className="text-green-500">
-                              <span className="text-secondary/50 mr-1">
-                                In:
+                    <div className="divide-y divide-secondary/5 max-h-[280px] overflow-y-auto scrollbar-thin">
+                      {attendanceHistory.map((record, idx) => {
+                        const duration = getWorkDuration(
+                          record.check_in_time,
+                          record.check_out_time
+                        );
+                        return (
+                          <div
+                            key={record.id || idx}
+                            className="px-4 py-3 hover:bg-secondary/3 transition-colors"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-semibold text-secondary/80">
+                                {formatDate(record.date)}
                               </span>
-                              {formatTime(record.check_in_time)}
-                            </span>
-                            <span className="text-orange-500">
-                              <span className="text-secondary/50 mr-1">
-                                Out:
+                              {duration && (
+                                <span className="text-xs text-secondary/40 bg-secondary/5 px-2 py-0.5 rounded-full">
+                                  {duration}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex gap-4 mt-1.5">
+                              <span className="text-xs text-emerald-600">
+                                <span className="text-secondary/40 mr-1">
+                                  In:
+                                </span>
+                                {formatTime(record.check_in_time)}
                               </span>
-                              {formatTime(record.check_out_time)}
-                            </span>
+                              <span className="text-xs text-orange-500">
+                                <span className="text-secondary/40 mr-1">
+                                  Out:
+                                </span>
+                                {formatTime(record.check_out_time)}
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -711,17 +897,136 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Manual Attendance Modal */}
+      {showManualModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 z-50 animate-fade-in">
+          <div className="bg-light rounded-t-3xl sm:rounded-3xl p-6 w-full sm:max-w-sm shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h3 className="text-base font-bold text-secondary">
+                  Manual Entry
+                </h3>
+                <p className="text-xs text-secondary/50 mt-0.5">
+                  Record missed check-in or check-out
+                </p>
+              </div>
+              <button
+                onClick={() => setShowManualModal(false)}
+                className="p-2 rounded-xl hover:bg-secondary/10 text-secondary/50 hover:text-secondary transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Type Toggle */}
+            <div className="flex bg-secondary/5 rounded-2xl p-1 mb-5">
+              <button
+                onClick={() => setManualType("check_in")}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2
+                  ${
+                    manualType === "check_in"
+                      ? "bg-white text-emerald-600 shadow-sm"
+                      : "text-secondary/50 hover:text-secondary/80"
+                  }`}
+              >
+                <LogIn size={15} />
+                Check In
+              </button>
+              <button
+                onClick={() => setManualType("check_out")}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2
+                  ${
+                    manualType === "check_out"
+                      ? "bg-white text-orange-500 shadow-sm"
+                      : "text-secondary/50 hover:text-secondary/80"
+                  }`}
+              >
+                <LogOut size={15} />
+                Check Out
+              </button>
+            </div>
+
+            {/* Date & Time inputs */}
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="block text-xs font-semibold text-secondary/60 uppercase tracking-wider mb-1.5">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={manualDate}
+                  max={new Date().toISOString().split("T")[0]}
+                  onChange={(e) => setManualDate(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-secondary/20 bg-white/80
+                    text-secondary text-sm focus:outline-none focus:ring-2 focus:ring-primary/30
+                    focus:border-primary/40 transition-all"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-secondary/60 uppercase tracking-wider mb-1.5">
+                  Time
+                </label>
+                <input
+                  type="time"
+                  value={manualTime}
+                  onChange={(e) => setManualTime(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-secondary/20 bg-white/80
+                    text-secondary text-sm focus:outline-none focus:ring-2 focus:ring-primary/30
+                    focus:border-primary/40 transition-all"
+                />
+              </div>
+            </div>
+
+            {/* User info */}
+            <div className="mb-5 px-3 py-2.5 rounded-xl bg-secondary/5 border border-secondary/10 flex items-center gap-2">
+              <Mail size={13} className="text-secondary/40 shrink-0" />
+              <span className="text-xs text-secondary/60 truncate">
+                {loadedCredentials?.quickchexEmail}
+              </span>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowManualModal(false)}
+                className="flex-1 py-3 rounded-xl text-sm font-semibold text-secondary/70
+                  border border-secondary/20 hover:bg-secondary/5 transition-all touch-manipulation"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleManualSubmit}
+                disabled={manualSubmitting}
+                className={`flex-1 py-3 rounded-xl text-sm font-semibold text-white transition-all
+                  touch-manipulation disabled:opacity-60 flex items-center justify-center gap-2
+                  ${
+                    manualType === "check_in"
+                      ? "bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700"
+                      : "bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700"
+                  }`}
+              >
+                {manualSubmitting ? (
+                  <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <Check size={16} />
+                )}
+                {manualSubmitting ? "Saving..." : "Save Record"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Data Display Modal */}
       {showDataModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 z-50 animate-fade-in">
+          <div className="bg-light rounded-t-3xl sm:rounded-3xl p-6 w-full sm:max-w-md shadow-2xl max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-base font-bold text-secondary">
                 Stored Credentials
               </h3>
               <button
                 onClick={() => setShowDataModal(false)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                className="p-2 rounded-xl hover:bg-secondary/10 text-secondary/50 hover:text-secondary transition-all"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -729,91 +1034,61 @@ export default function Home() {
 
             {loadedCredentials ? (
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    QuickChex Email
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={loadedCredentials.quickchexEmail}
-                      readOnly
-                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md 
-                        bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                    />
-                    <button
-                      onClick={() =>
-                        copyToClipboard(loadedCredentials.quickchexEmail)
-                      }
-                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
+                {[
+                  {
+                    label: "QuickChex Email",
+                    value: loadedCredentials.quickchexEmail,
+                    masked: false,
+                  },
+                  {
+                    label: "QuickChex Password",
+                    value: loadedCredentials.quickchexPassword,
+                    masked: true,
+                  },
+                  {
+                    label: "Google App Password",
+                    value: loadedCredentials.googlePassword,
+                    masked: true,
+                  },
+                ].map(({ label, value, masked }) => (
+                  <div key={label}>
+                    <label className="block text-xs font-semibold text-secondary/50 uppercase tracking-wider mb-1.5">
+                      {label}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type={masked && !showPassword ? "password" : "text"}
+                        value={value}
+                        readOnly
+                        className="flex-1 px-3 py-2.5 border border-secondary/15 rounded-xl 
+                          bg-white/60 text-secondary text-sm focus:outline-none"
+                      />
+                      {masked && (
+                        <button
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="p-2.5 rounded-xl hover:bg-secondary/10 text-secondary/40 hover:text-secondary/70 transition-all"
+                        >
+                          {showPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => copyToClipboard(value)}
+                        className="p-2.5 rounded-xl hover:bg-secondary/10 text-secondary/40 hover:text-secondary/70 transition-all"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    QuickChex Password
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={loadedCredentials.quickchexPassword}
-                      readOnly
-                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md 
-                        bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                    />
-                    <button
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() =>
-                        copyToClipboard(loadedCredentials.quickchexPassword)
-                      }
-                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Google App Password
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={loadedCredentials.googlePassword}
-                      readOnly
-                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md 
-                        bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                    />
-                    <button
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() =>
-                        copyToClipboard(loadedCredentials.googlePassword)
-                      }
-                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+                ))}
               </div>
             ) : (
-              <div className="text-center py-8">
-                <AlertTriangle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-500 dark:text-gray-400">
+              <div className="text-center py-10">
+                <AlertTriangle className="w-10 h-10 text-secondary/30 mx-auto mb-3" />
+                <p className="text-secondary/50 text-sm">
                   No stored credentials found
                 </p>
               </div>
@@ -822,18 +1097,16 @@ export default function Home() {
             <div className="flex gap-3 mt-6">
               <button
                 onClick={() => setShowDataModal(false)}
-                className="flex-1 py-2 px-4 text-sm font-medium text-gray-700 dark:text-gray-300 
-                  border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700
-                  transition-colors duration-200"
+                className="flex-1 py-3 px-4 text-sm font-semibold text-secondary/70 
+                  border border-secondary/20 rounded-xl hover:bg-secondary/5 transition-all touch-manipulation"
               >
                 Close
               </button>
               {loadedCredentials && (
                 <button
                   onClick={clearStoredData}
-                  className="flex-1 py-2 px-4 text-sm font-medium text-red-600 dark:text-red-400 
-                    border border-red-300 dark:border-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20
-                    transition-colors duration-200"
+                  className="flex-1 py-3 px-4 text-sm font-semibold text-red-500 
+                    border border-red-300/40 rounded-xl hover:bg-red-50/50 transition-all touch-manipulation"
                 >
                   Clear All Data
                 </button>
