@@ -42,6 +42,12 @@ export function ProgressBar({ statusMessages }: ProgressBarProps) {
     let completed = false;
 
     switch (latest.status) {
+      case "processing":
+        newColor = "#60a5fa"; // Blue
+        break;
+      case "step_warning":
+        newColor = "#fbbf24"; // Amber
+        break;
       case "step_error":
         newColor = "#f87171"; // Red
         break;

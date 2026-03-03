@@ -12,21 +12,25 @@ import {
   Trash2,
   Copy,
   X,
+  Clock,
+  History,
 } from "lucide-react";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { StatusMessage } from "./components/StatusMessage";
 import { ProgressBar } from "./components/ProgressBar";
 import type { Credentials, StatusMessage as StatusMessageType } from "./types";
 
-const REQUEST_TIMEOUT = 30000; // 30 seconds timeout
-const DEBOUNCE_DELAY = 500; // Prevent double clicks
+const REQUEST_TIMEOUT = 20000; // 20 seconds timeout (reduced from 30)
+const DEBOUNCE_DELAY = 500;
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace("/mark", "") || "";
 
 export default function Home() {
   const formRef = useRef<HTMLFormElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusMessages, setStatusMessages] = useState<StatusMessageType[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSubmittingRef = useRef(false);
 
@@ -40,38 +44,87 @@ export default function Home() {
 
   const [showDataModal, setShowDataModal] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
-  // Today's attendance times
+  // Today's attendance from server
   const [todayAttendance, setTodayAttendance] = useState<{
     checkIn?: string;
     checkOut?: string;
   } | null>(null);
 
-  // Load today's attendance on mount
+  // Attendance history from server
+  const [attendanceHistory, setAttendanceHistory] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Load credentials on mount
   useEffect(() => {
-    const today = new Date().toISOString().split("T")[0];
-    const attendanceKey = `attendance_${today}`;
-    const savedAttendance = localStorage.getItem(attendanceKey);
-    if (savedAttendance) {
+    const savedCredentialsStr = localStorage.getItem("quickchex_credentials");
+    if (savedCredentialsStr) {
       try {
-        setTodayAttendance(JSON.parse(savedAttendance));
-      } catch (e) {
-        console.error("Error loading attendance:", e);
+        const saved = JSON.parse(savedCredentialsStr) as Credentials;
+        if (
+          saved.quickchexEmail &&
+          saved.quickchexPassword &&
+          saved.googlePassword
+        ) {
+          setLoadedCredentials(saved);
+          setHasStoredCredentials(true);
+          // Fetch attendance history for this user
+          fetchAttendanceHistory(saved.quickchexEmail);
+        } else {
+          localStorage.removeItem("quickchex_credentials");
+        }
+      } catch {
+        localStorage.removeItem("quickchex_credentials");
       }
     }
   }, []);
 
-  // Update attendance display after successful mark
-  const updateTodayAttendance = useCallback(() => {
-    const today = new Date().toISOString().split("T")[0];
-    const attendanceKey = `attendance_${today}`;
-    const savedAttendance = localStorage.getItem(attendanceKey);
-    if (savedAttendance) {
-      try {
-        setTodayAttendance(JSON.parse(savedAttendance));
-      } catch (e) {
-        console.error("Error loading attendance:", e);
+  const fetchAttendanceHistory = useCallback(async (userEmail: string) => {
+    setHistoryLoading(true);
+    try {
+      const resp = await fetch(
+        `/api/attendance-history?user_email=${encodeURIComponent(
+          userEmail
+        )}&days_back=7`
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        const records = data.records || [];
+        setAttendanceHistory(records);
+
+        // Set today's attendance from server data
+        const today = new Date().toISOString().split("T")[0];
+        const todayRecord = records.find((r: any) => r.date === today);
+        if (todayRecord) {
+          setTodayAttendance({
+            checkIn: todayRecord.check_in_time
+              ? new Date(todayRecord.check_in_time).toLocaleTimeString(
+                  "en-US",
+                  {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: true,
+                  }
+                )
+              : undefined,
+            checkOut: todayRecord.check_out_time
+              ? new Date(todayRecord.check_out_time).toLocaleTimeString(
+                  "en-US",
+                  {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: true,
+                  }
+                )
+              : undefined,
+          });
+        }
       }
+    } catch (e) {
+      console.error("Failed to fetch attendance history:", e);
+    } finally {
+      setHistoryLoading(false);
     }
   }, []);
 
@@ -79,30 +132,26 @@ export default function Home() {
     setToastMessage(message);
     setToastType(type);
     setShowToast(true);
-    setTimeout(() => {
-      setShowToast(false);
-    }, 3000);
-  };
-
-  const showStoredData = () => {
-    setShowDataModal(true);
+    setTimeout(() => setShowToast(false), 3000);
   };
 
   const clearStoredData = () => {
     localStorage.removeItem("quickchex_credentials");
     setHasStoredCredentials(false);
     setLoadedCredentials(null);
+    setTodayAttendance(null);
+    setAttendanceHistory([]);
     formRef.current?.reset();
     setShowDataModal(false);
-    displayToast("Stored data cleared successfully!", "success");
+    displayToast("Stored data cleared!", "success");
   };
 
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      displayToast("Copied to clipboard!", "success");
-    } catch (err) {
-      displayToast("Failed to copy to clipboard", "error");
+      displayToast("Copied!", "success");
+    } catch {
+      displayToast("Failed to copy", "error");
     }
   };
 
@@ -118,36 +167,10 @@ export default function Home() {
     scrollToBottom();
   }, [statusMessages, scrollToBottom]);
 
-  useEffect(() => {
-    const savedCredentialsStr = localStorage.getItem("quickchex_credentials");
-    if (savedCredentialsStr) {
-      try {
-        const savedCredentials = JSON.parse(savedCredentialsStr) as Credentials;
-        if (
-          savedCredentials.quickchexEmail &&
-          savedCredentials.quickchexPassword &&
-          savedCredentials.googlePassword
-        ) {
-          setLoadedCredentials(savedCredentials);
-          setHasStoredCredentials(true);
-        } else {
-          localStorage.removeItem("quickchex_credentials");
-          setHasStoredCredentials(false);
-          setLoadedCredentials(null);
-        }
-      } catch (err: any) {
-        console.error("Error loading saved credentials:", err);
-        localStorage.removeItem("quickchex_credentials");
-        setHasStoredCredentials(false);
-        setLoadedCredentials(null);
-      }
-    }
-  }, []);
-
   const cleanup = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -161,246 +184,262 @@ export default function Home() {
   }, [cleanup]);
 
   const loginFailureKeywords = [
-    "Failed to obtain initial QuikChex session cookie",
+    "Invalid email or password",
     "Login failed. Check credentials",
-    "failed to extract necessary token",
+    "Gmail login failed",
   ];
 
-  const handleCredentialsError = useCallback(
-    (message: string, shouldClearCredentials = false) => {
-      if (shouldClearCredentials) {
-        localStorage.removeItem("quickchex_credentials");
-        setHasStoredCredentials(false);
-        setLoadedCredentials(null);
-        formRef.current?.reset(); // Reset form only if we are clearing credentials and showing it
-      }
-      setIsProcessing(false);
-      displayToast(message, "error");
-    },
-    []
-  );
+  const handleClick = useCallback(
+    async (retryWithoutSession = false) => {
+      if (isSubmittingRef.current || isProcessing) return;
 
-  const handleClick = useCallback(async () => {
-    // Debounce: prevent multiple rapid clicks
-    if (isSubmittingRef.current || isProcessing) {
-      return;
-    }
+      let credentialsToUse: Credentials | null = null;
 
-    let credentialsToUse: Credentials | null = null;
+      if (hasStoredCredentials && loadedCredentials) {
+        credentialsToUse = { ...loadedCredentials };
+        // If retrying without session, clear session cookies
+        if (retryWithoutSession) {
+          credentialsToUse._quikchex_app_session = undefined;
+          credentialsToUse.remember_user_token = undefined;
+        }
+      } else if (formRef.current) {
+        const formData = new FormData(formRef.current);
+        const emailVal = formData.get("email") as string;
+        const password = formData.get("password") as string;
+        const gmail_password = formData.get("gmail_password") as string;
 
-    if (hasStoredCredentials && loadedCredentials) {
-      credentialsToUse = loadedCredentials;
-    } else if (formRef.current) {
-      const formData = new FormData(formRef.current);
-      const email = formData.get("email") as string;
-      const password = formData.get("password") as string;
-      const gmail_password = formData.get("gmail_password") as string;
-
-      if (!email || !password || !gmail_password) {
-        const validationMsg = {
-          status: "info" as const,
-          message: "Please fill in all credential fields.",
+        if (!emailVal || !password || !gmail_password) {
+          displayToast("Please fill in all fields.", "error");
+          return;
+        }
+        credentialsToUse = {
+          quickchexEmail: emailVal,
+          quickchexPassword: password,
+          googlePassword: gmail_password,
         };
-        setStatusMessages([validationMsg]);
-        displayToast(validationMsg.message, "error");
+      }
+
+      if (!credentialsToUse) {
+        displayToast("Could not retrieve credentials.", "error");
         return;
       }
-      credentialsToUse = {
-        quickchexEmail: email,
-        quickchexPassword: password,
-        googlePassword: gmail_password,
-      };
-    }
 
-    if (!credentialsToUse) {
-      displayToast("Could not retrieve credentials.", "error");
-      return;
-    }
+      const finalCredentials = { ...credentialsToUse };
+      isSubmittingRef.current = true;
 
-    const finalCredentials = { ...credentialsToUse };
-    isSubmittingRef.current = true;
+      try {
+        setIsProcessing(true);
+        setStatusMessages([]);
+        cleanup();
 
-    try {
-      // Optimistic UI update - show processing immediately
-      setIsProcessing(true);
-      setStatusMessages([]);
+        // Build request body (credentials in POST body, not URL params)
+        const requestBody: Record<string, string> = {
+          user_email: finalCredentials.quickchexEmail,
+          quickchex_pass: finalCredentials.quickchexPassword,
+          gmail_app_password: finalCredentials.googlePassword,
+        };
 
-      // Cleanup any existing connections
-      cleanup();
-
-      const paramsData: Record<string, string> = {
-        user_email: finalCredentials.quickchexEmail,
-        quickchex_pass: finalCredentials.quickchexPassword,
-        gmail_app_password: finalCredentials.googlePassword,
-      };
-
-      if (finalCredentials._quikchex_app_session) {
-        paramsData._quikchex_app_session =
-          finalCredentials._quikchex_app_session;
-      }
-      if (finalCredentials.remember_user_token) {
-        paramsData.remember_user_token = finalCredentials.remember_user_token;
-      }
-
-      const params = new URLSearchParams(paramsData);
-      const eventSourceUrl = `/api/mark-attendance?${params.toString()}`;
-
-      eventSourceRef.current = new EventSource(eventSourceUrl);
-      let hasReceivedSuccess = false;
-
-      // Set timeout for slow networks
-      timeoutRef.current = setTimeout(() => {
-        if (!hasReceivedSuccess && eventSourceRef.current) {
-          cleanup();
-          const errMsg =
-            "Request timed out. Please check your network connection and try again.";
-          setStatusMessages((prev) => [
-            ...prev,
-            { status: "app_error", message: errMsg },
-          ]);
-          setIsProcessing(false);
-          displayToast(errMsg, "error");
+        if (finalCredentials._quikchex_app_session) {
+          requestBody._quikchex_app_session =
+            finalCredentials._quikchex_app_session;
         }
-      }, REQUEST_TIMEOUT);
+        if (finalCredentials.remember_user_token) {
+          requestBody.remember_user_token =
+            finalCredentials.remember_user_token;
+        }
 
-      eventSourceRef.current.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as StatusMessageType;
+        // Use fetch + POST + ReadableStream instead of EventSource GET
+        abortControllerRef.current = new AbortController();
 
-          // Batch state updates for better performance
-          setStatusMessages((prev) => {
-            const newMessages = [...prev, data];
-            return newMessages;
-          });
+        let hasReceivedSuccess = false;
 
-          if (data.status === "app_error") {
-            hasReceivedSuccess = true;
+        timeoutRef.current = setTimeout(() => {
+          if (!hasReceivedSuccess) {
             cleanup();
-            const isLoginFailure = loginFailureKeywords.some((keyword) =>
-              data.message.includes(keyword)
-            );
-            handleCredentialsError(
-              data.message || "An critical error occurred.",
-              isLoginFailure
-            );
-          } else if (data.status === "cookies_update" && data.cookies) {
-            // cookies_update comes BEFORE app_success now - just save the cookies
-            const { _quikchex_app_session, remember_user_token } = data.cookies;
-            const updatedCredentials = {
-              ...finalCredentials,
-              _quikchex_app_session,
-              remember_user_token,
-            };
-            // Save to localStorage
-            localStorage.setItem(
-              "quickchex_credentials",
-              JSON.stringify(updatedCredentials)
-            );
-            setLoadedCredentials(updatedCredentials);
-            setHasStoredCredentials(true);
-            console.log(
-              "Cookies saved to localStorage:",
-              _quikchex_app_session?.substring(0, 30) + "..."
-            );
-            // Don't close connection or show toast yet - wait for app_success
-          } else if (data.status === "app_success") {
-            hasReceivedSuccess = true;
-            cleanup();
-
-            // Record check-in/check-out time in localStorage
-            const now = new Date();
-            const today = now.toISOString().split("T")[0];
-            const timeStr = now.toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: true,
-            });
-            const attendanceKey = `attendance_${today}`;
-            const existingAttendance = localStorage.getItem(attendanceKey);
-
-            let attendanceData = existingAttendance
-              ? JSON.parse(existingAttendance)
-              : {};
-
-            // Determine if this is check-in or check-out based on existing data
-            if (!attendanceData.checkIn) {
-              attendanceData.checkIn = timeStr;
-            } else {
-              attendanceData.checkOut = timeStr;
-            }
-
-            localStorage.setItem(attendanceKey, JSON.stringify(attendanceData));
-
-            // Credentials should already be saved by cookies_update, but save if not
-            const existingCreds = localStorage.getItem("quickchex_credentials");
-            if (!existingCreds) {
-              localStorage.setItem(
-                "quickchex_credentials",
-                JSON.stringify(finalCredentials)
-              );
-            }
-            setHasStoredCredentials(true);
+            setStatusMessages((prev) => [
+              ...prev,
+              {
+                status: "app_error",
+                message: "Request timed out. Check your connection.",
+              },
+            ]);
             setIsProcessing(false);
-
-            // Update attendance display
-            updateTodayAttendance();
-
-            displayToast(
-              data.message || "Attendance marked successfully!",
-              "success"
-            );
+            displayToast("Request timed out.", "error");
           }
-        } catch (error: any) {
-          console.error(
-            "Error parsing SSE message:",
-            error,
-            "Raw data:",
-            event.data
-          );
-          const errorMessage = `Error processing server message: ${
-            event.data || "Malformed data received."
-          }`;
-          setStatusMessages((prev) => [
-            ...prev,
-            { status: "app_error", message: errorMessage },
-          ]);
-          cleanup();
-          setIsProcessing(false);
-          displayToast(errorMessage, "error");
-        }
-      };
+        }, REQUEST_TIMEOUT);
 
-      eventSourceRef.current.onerror = (err: Event) => {
-        console.error("SSE Error with /api/mark-attendance:", err);
-        // Only handle error if we haven't received success yet
+        const response = await fetch("/api/mark-attendance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+          signal: abortControllerRef.current.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server error: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("No response stream");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith("data:")) continue;
+
+            const jsonStr = trimmed.substring(5).trim();
+            if (!jsonStr) continue;
+
+            try {
+              const data = JSON.parse(jsonStr) as StatusMessageType;
+
+              setStatusMessages((prev) => [...prev, data]);
+
+              if (data.status === "app_error") {
+                hasReceivedSuccess = true;
+                cleanup();
+
+                // Check if this is a CSRF/session error (auto-retry)
+                const isCsrfError =
+                  data.message.includes("CSRF") ||
+                  data.message.includes("Session expired") ||
+                  data.message.includes("Session recovery failed");
+
+                const isLoginFailure = loginFailureKeywords.some((kw) =>
+                  data.message.includes(kw)
+                );
+
+                if (isCsrfError && !retryWithoutSession) {
+                  // Auto-retry without session cookies
+                  setStatusMessages((prev) => [
+                    ...prev,
+                    {
+                      status: "info",
+                      message: "🔄 Retrying with fresh session...",
+                    },
+                  ]);
+                  setIsProcessing(false);
+                  isSubmittingRef.current = false;
+                  // Clear session from stored credentials
+                  const updatedCreds = { ...finalCredentials };
+                  delete updatedCreds._quikchex_app_session;
+                  delete updatedCreds.remember_user_token;
+                  localStorage.setItem(
+                    "quickchex_credentials",
+                    JSON.stringify(updatedCreds)
+                  );
+                  setLoadedCredentials(updatedCreds);
+                  // Retry
+                  setTimeout(() => handleClick(true), 500);
+                  return;
+                }
+
+                if (isLoginFailure) {
+                  localStorage.removeItem("quickchex_credentials");
+                  setHasStoredCredentials(false);
+                  setLoadedCredentials(null);
+                }
+
+                setIsProcessing(false);
+                displayToast(data.message, "error");
+              } else if (data.status === "cookies_update" && data.cookies) {
+                const { _quikchex_app_session, remember_user_token } =
+                  data.cookies;
+                const updatedCredentials = {
+                  ...finalCredentials,
+                  _quikchex_app_session,
+                  remember_user_token,
+                };
+                localStorage.setItem(
+                  "quickchex_credentials",
+                  JSON.stringify(updatedCredentials)
+                );
+                setLoadedCredentials(updatedCredentials);
+                setHasStoredCredentials(true);
+              } else if (data.status === "app_success") {
+                hasReceivedSuccess = true;
+                cleanup();
+
+                // Save credentials if not already saved
+                if (!localStorage.getItem("quickchex_credentials")) {
+                  localStorage.setItem(
+                    "quickchex_credentials",
+                    JSON.stringify(finalCredentials)
+                  );
+                }
+                setHasStoredCredentials(true);
+                setIsProcessing(false);
+
+                // Refresh attendance from server
+                fetchAttendanceHistory(finalCredentials.quickchexEmail);
+
+                displayToast(data.message || "Attendance marked!", "success");
+              }
+            } catch (parseError) {
+              console.error("SSE parse error:", parseError, "data:", jsonStr);
+            }
+          }
+        }
+
+        // Stream ended without success/error
         if (!hasReceivedSuccess) {
           cleanup();
-          const errMsg = "Connection to server lost. Please try again.";
-          setStatusMessages((prev) => [
-            ...prev,
-            { status: "app_error", message: errMsg },
-          ]);
           setIsProcessing(false);
-          displayToast(errMsg, "error");
         }
-      };
-    } catch (error: any) {
-      console.error("Form submission error (client-side): ", error);
-      cleanup();
-      const errMsg =
-        "Failed to initiate attendance marking. Please check your network and try again.";
-      setStatusMessages([{ status: "app_error", message: errMsg }]);
-      setIsProcessing(false);
-      displayToast(errMsg, "error");
+      } catch (error: any) {
+        if (error.name === "AbortError") return; // Intentional abort
+        console.error("Submission error:", error);
+        cleanup();
+        setStatusMessages([
+          {
+            status: "app_error",
+            message: "Connection failed. Please try again.",
+          },
+        ]);
+        setIsProcessing(false);
+        displayToast("Connection failed.", "error");
+      }
+    },
+    [
+      hasStoredCredentials,
+      loadedCredentials,
+      isProcessing,
+      cleanup,
+      fetchAttendanceHistory,
+    ]
+  );
+
+  const formatDate = (dateStr: string) => {
+    const d = new Date(dateStr + "T00:00:00");
+    return d.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  const formatTime = (timeStr: string | null | undefined) => {
+    if (!timeStr) return "—";
+    try {
+      return new Date(timeStr).toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+    } catch {
+      return timeStr;
     }
-  }, [
-    hasStoredCredentials,
-    loadedCredentials,
-    isProcessing,
-    cleanup,
-    handleCredentialsError,
-    updateTodayAttendance,
-  ]);
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative">
@@ -531,7 +570,7 @@ export default function Home() {
                 !isProcessing && (
                   <div className="my-4 p-4 border border-blue-500/30 bg-blue-500/10 rounded-lg">
                     <p className="text-sm font-medium text-secondary/90 mb-2 text-center">
-                      📅 Today's Attendance
+                      📅 Today&apos;s Attendance
                     </p>
                     <div className="flex justify-around text-center">
                       <div>
@@ -553,21 +592,23 @@ export default function Home() {
 
               {statusMessages.length > 0 &&
                 !isProcessing &&
-                (statusMessages[0].status === "info" ||
-                  statusMessages[0].status === "app_error" ||
-                  statusMessages[0].status === "step_error") && (
+                (statusMessages[statusMessages.length - 1].status === "info" ||
+                  statusMessages[statusMessages.length - 1].status ===
+                    "app_error" ||
+                  statusMessages[statusMessages.length - 1].status ===
+                    "step_error") && (
                   <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-md text-red-400 text-sm flex items-center">
                     <AlertTriangle size={18} className="mr-2 shrink-0" />
-                    {statusMessages[0].message}
+                    {statusMessages[statusMessages.length - 1].message}
                   </div>
                 )}
 
               <button
-                onClick={handleClick}
+                onClick={() => handleClick(false)}
                 type="button"
                 disabled={isProcessing}
                 className="btn-primary w-full py-3 px-4 mt-6 font-medium flex items-center justify-center
-                  transition-all duration-300 hover:shadow-md active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none"
+                  transition-all duration-300 hover:shadow-md active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Check className="w-4 h-4 mr-2" />
                 <span>
@@ -575,10 +616,29 @@ export default function Home() {
                 </span>
               </button>
 
-              {/* LocalStorage Management Buttons */}
+              {/* Buttons Row */}
               <div className="flex gap-2 mt-4">
+                {hasStoredCredentials && (
+                  <button
+                    onClick={() => {
+                      setShowHistory(!showHistory);
+                      if (!showHistory && loadedCredentials) {
+                        fetchAttendanceHistory(
+                          loadedCredentials.quickchexEmail
+                        );
+                      }
+                    }}
+                    type="button"
+                    className="flex-1 py-2 px-3 text-sm font-medium text-secondary/80 hover:text-secondary 
+                      border border-secondary/20 hover:border-secondary/40 rounded-md transition-all duration-200
+                      flex items-center justify-center"
+                  >
+                    <History className="w-4 h-4 mr-2" />
+                    History
+                  </button>
+                )}
                 <button
-                  onClick={showStoredData}
+                  onClick={() => setShowDataModal(true)}
                   type="button"
                   className="flex-1 py-2 px-3 text-sm font-medium text-secondary/80 hover:text-secondary 
                     border border-secondary/20 hover:border-secondary/40 rounded-md transition-all duration-200
@@ -598,6 +658,54 @@ export default function Home() {
                   Clear Data
                 </button>
               </div>
+
+              {/* Attendance History */}
+              {showHistory && hasStoredCredentials && (
+                <div className="mt-4 border border-secondary/20 rounded-lg overflow-hidden">
+                  <div className="p-3 bg-secondary/5 border-b border-secondary/10">
+                    <h3 className="text-sm font-semibold text-secondary flex items-center">
+                      <Clock className="w-4 h-4 mr-2" />
+                      Last 7 Days
+                    </h3>
+                  </div>
+                  {historyLoading ? (
+                    <div className="p-4 text-center text-sm text-secondary/60">
+                      Loading...
+                    </div>
+                  ) : attendanceHistory.length === 0 ? (
+                    <div className="p-4 text-center text-sm text-secondary/60">
+                      No attendance records found
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-secondary/10 max-h-[250px] overflow-y-auto">
+                      {attendanceHistory.map((record, idx) => (
+                        <div
+                          key={record.id || idx}
+                          className="flex items-center justify-between px-4 py-3 text-sm"
+                        >
+                          <span className="text-secondary/80 font-medium min-w-[90px]">
+                            {formatDate(record.date)}
+                          </span>
+                          <div className="flex gap-4 text-xs">
+                            <span className="text-green-500">
+                              <span className="text-secondary/50 mr-1">
+                                In:
+                              </span>
+                              {formatTime(record.check_in_time)}
+                            </span>
+                            <span className="text-orange-500">
+                              <span className="text-secondary/50 mr-1">
+                                Out:
+                              </span>
+                              {formatTime(record.check_out_time)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

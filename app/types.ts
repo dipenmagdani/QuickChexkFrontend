@@ -7,10 +7,25 @@ export type Credentials = {
 };
 
 export type StatusMessage =
-  | { status: 'info' | 'step_success' | 'step_error' | 'app_success' | 'app_error'; message: string; cookies?: never; }
-  | { status: 'cookies_update'; message?: string; cookies: { _quikchex_app_session: string; remember_user_token: string; }; };
+  | {
+      status:
+        | "info"
+        | "processing"
+        | "step_success"
+        | "step_warning"
+        | "step_error"
+        | "app_success"
+        | "app_error";
+      message: string;
+      cookies?: never;
+    }
+  | {
+      status: "cookies_update";
+      message?: string;
+      cookies: { _quikchex_app_session: string; remember_user_token: string };
+    };
 
 export interface AttendanceResult {
   success: boolean;
   message: string;
-} 
+}
